@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Posture</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --fg: #1b1b1a; --muted: #8a8884; --line: #e4e2dd;
+    --accent: #2f6f5e; --accent-fg: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121212; --fg: #ecebe8; --muted: #7c7a76; --line: #262625; --accent: #8fc7b2; --accent-fg: #0f1a16; }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; user-select: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 32px 24px; gap: 36px;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
+
+  .dial { position: relative; width: 220px; height: 220px; }
+  .dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .dial circle { fill: none; stroke-width: 2; }
+  .track { stroke: var(--line); }
+  .prog { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
+  .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .time { font-size: 52px; font-weight: 200; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .sub { font-size: 12px; color: var(--muted); max-width: 140px; text-align: center; }
+
+  .stepper { display: flex; align-items: center; gap: 22px; }
+  .stepper button {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line);
+    background: transparent; color: var(--fg); font-size: 18px; font-weight: 300; cursor: pointer;
+    transition: border-color .2s;
+  }
+  .stepper button:hover { border-color: var(--muted); }
+  .stepper button:disabled { opacity: .3; cursor: default; }
+  .val { min-width: 92px; text-align: center; }
+  .val b { font-size: 22px; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .val span { display: block; font-size: 11px; color: var(--muted); letter-spacing: .08em; }
+
+  .go {
+    width: 180px; height: 46px; border-radius: 23px; border: 0; cursor: pointer;
+    background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 500; letter-spacing: .02em;
+    transition: transform .15s, opacity .2s;
+  }
+  .go:active { transform: scale(.97); }
+  .go.on { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+
+  .flash { animation: flash 1.6s ease; }
+  @keyframes flash { 30% { background: color-mix(in srgb, var(--accent) 18%, var(--bg)); } }
+  @media (prefers-reduced-motion: reduce) { .prog { transition: none; } .flash { animation: none; } }
+</style>
+</head>
+<body>
+  <div class="eyebrow">Posture</div>
+
+  <div class="dial">
+    <svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="48"/><circle class="prog" id="prog" cx="50" cy="50" r="48"/></svg>
+    <div class="center">
+      <div class="time" id="time">20:00</div>
+      <div class="sub" id="sub">Chin back. Head over shoulders.</div>
+    </div>
+  </div>
+
+  <div class="stepper">
+    <button id="minus" aria-label="Shorter interval">−</button>
+    <div class="val"><b id="mins">20</b><span>MINUTES</span></div>
+    <button id="plus" aria-label="Longer interval">+</button>
+  </div>
+
+  <button class="go" id="go">Start</button>
+
+<script src="js/neutralino.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const NATIVE = typeof NL_PORT !== 'undefined';
+const STEPS = [1, 5, 10, 15, 20, 25, 30, 45, 60, 90, 120];
+const C = 2 * Math.PI * 48;
+const MSG = 'Chin back. Head over shoulders.';
+
+let mins = 20, running = false, nextAt = 0, tick = null;
+try { mins = +localStorage.getItem('mins') || 20; } catch {}
+if (NATIVE) Neutralino.init();
+
+$('prog').style.strokeDasharray = C;
+
+function fmt(s) { return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+
+function render() {
+  const total = mins * 60;
+  const left = running ? Math.max(0, Math.ceil((nextAt - Date.now()) / 1000)) : total;
+  $('time').textContent = fmt(left);
+  $('prog').style.strokeDashoffset = C * (1 - left / total);
+  $('mins').textContent = mins;
+  $('minus').disabled = mins === STEPS[0];
+  $('plus').disabled = mins === STEPS.at(-1);
+  $('sub').textContent = running ? 'until next check' : MSG;
+  $('go').textContent = running ? 'Pause' : 'Start';
+  $('go').classList.toggle('on', running);
+  return left;
+}
+
+function nudge() {
+  if (NATIVE) Neutralino.os.showNotification('Posture check', MSG);
+  else if ('Notification' in window && Notification.permission === 'granted') new Notification('Posture check', { body: MSG });
+  document.body.classList.remove('flash'); void document.body.offsetWidth; document.body.classList.add('flash');
+  nextAt = Date.now() + mins * 60000;
+}
+
+function step(dir) {
+  const i = STEPS.indexOf(mins);
+  mins = STEPS[Math.min(STEPS.length - 1, Math.max(0, (i < 0 ? 4 : i) + dir))];
+  try { localStorage.setItem('mins', mins); } catch {}
+  if (running) nextAt = Date.now() + mins * 60000;
+  render();
+}
+
+$('minus').onclick = () => step(-1);
+$('plus').onclick = () => step(1);
+$('go').onclick = async () => {
+  running = !running;
+  clearInterval(tick);
+  if (running) {
+    if (!NATIVE && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
+    nextAt = Date.now() + mins * 60000;
+    tick = setInterval(() => { if (render() === 0) nudge(); }, 1000);
+  }
+  render();
+};
+render();
+</script>
+</body>
+</html>

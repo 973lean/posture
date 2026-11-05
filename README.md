@@ -1,11 +1,30 @@
-# Posture Nudge
+# Posture
 
-A tiny reminder to stop leaning your head forward. One HTML file, no install, no dependencies.
+A quiet reminder to keep your head back. One screen, one setting, ~2 MB.
 
-## Use
+Set the interval, press **Start**. Every interval you get a system notification:
+*Chin back. Head over shoulders.*
 
-1. Open `index.html` in a browser (or enable GitHub Pages for this repo).
-2. Set the interval in minutes and press **Start**.
-3. Allow notifications. Leave the tab open (it can be in the background).
+## Download
 
-Your interval is remembered between visits.
+Grab the binary for your system from `dist/Posture/` (or a release):
+
+| System | File |
+|---|---|
+| Windows | `Posture-win_x64.exe` |
+| macOS (Apple Silicon / Intel) | `Posture-mac_universal` |
+| Linux | `Posture-linux_x64` |
+
+macOS: the app is unsigned. First launch: right-click → Open, or run
+`xattr -d com.apple.quarantine Posture-mac_universal && chmod +x Posture-mac_universal`.
+
+## Build
+
+Built with [Neutralinojs](https://neutralino.js.org) — the UI is `resources/index.html`.
+
+```bash
+npx @neutralinojs/neu update
+npx @neutralinojs/neu build --release --embed-resources
+```
+
+`resources/index.html` also runs on its own in any browser (e.g. GitHub Pages).
