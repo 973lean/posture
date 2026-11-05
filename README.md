@@ -6,7 +6,7 @@ Click the tray icon and check an interval (10–60 min). When it's time, a small
 top of your screen — *Head up. Chin back, ears over shoulders.* — and fades away after a few seconds
 (click to dismiss). Looking up at it is the point.
 
-Tray menu: interval, **Pause**, **Show reminder now**, **Quit**. Your choice is remembered.
+Tray menu: interval, **Pause**, **Show reminder now**, **Start at login**, **Quit**. Your choice is remembered.
 
 ## Download
 
