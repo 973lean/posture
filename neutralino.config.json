@@ -11,11 +11,15 @@
     "app.*",
     "os.setTray",
     "os.execCommand",
+    "os.getEnv",
     "window.*",
     "storage.*",
     "events.*",
     "filesystem.move",
-    "filesystem.remove"
+    "filesystem.remove",
+    "filesystem.writeFile",
+    "filesystem.createDirectory",
+    "filesystem.getStats"
   ],
   "modes": {
     "window": {

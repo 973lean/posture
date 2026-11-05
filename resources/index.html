@@ -52,7 +52,7 @@ const OPTIONS = [10, 15, 20, 30, 45, 60];
 const SHOW_MS = 7000;
 const card = document.getElementById('card'), bar = document.getElementById('bar');
 
-let mins = 20, paused = false, nextAt = 0, hideTimer = null;
+let mins = 20, paused = false, atLogin = false, nextAt = 0, hideTimer = null;
 
 Neutralino.init();
 
@@ -71,6 +71,7 @@ function tray() {
       { text: '-' },
       { id: 'pause', text: 'Pause', isChecked: paused },
       { id: 'test', text: 'Show reminder now' },
+      { id: 'login', text: 'Start at login', isChecked: atLogin },
       { text: '-' },
       { id: 'quit', text: 'Quit Posture' },
       { id: 'ver', text: `Version ${NL_APPVERSION}`, isDisabled: true },
@@ -104,6 +105,7 @@ card.addEventListener('click', dismiss);
 Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
   if (id === 'quit') return Neutralino.app.exit();
   if (id === 'test') return popup();
+  if (id === 'login') return setLogin(!atLogin).then(tray);
   if (id === 'pause') paused = !paused;
   else if (id?.startsWith('m')) { mins = +id.slice(1); paused = false; }
   reset(); save(); tray();
@@ -116,6 +118,62 @@ setInterval(() => {
   if (paused) return;
   if (Date.now() >= nextAt) { reset(); popup(); }
 }, 10000);
+
+// Start at login: a Run registry value (Windows), a LaunchAgent (macOS) or an autostart
+// .desktop file (Linux). --path pins the app folder so resources.neu is found at boot.
+const LOGIN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const xml = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function exePath() {
+  const a = NL_ARGS[0];
+  return /^([a-zA-Z]:)?[\\/]/.test(a) ? a : `${NL_PATH}/${a.split(/[\\/]/).pop()}`;
+}
+async function loginFile() {
+  const home = await Neutralino.os.getEnv('HOME');
+  return NL_OS === 'Darwin'
+    ? { dir: `${home}/Library/LaunchAgents`, file: `${home}/Library/LaunchAgents/app.posturenudge.plist` }
+    : { dir: `${home}/.config/autostart`, file: `${home}/.config/autostart/posture.desktop` };
+}
+async function readLogin() {
+  try {
+    if (NL_OS === 'Windows') return (await Neutralino.os.execCommand(`reg query "${LOGIN_KEY}" /v Posture`)).exitCode === 0;
+    await Neutralino.filesystem.getStats((await loginFile()).file);
+    return true;
+  } catch { return false; }
+}
+async function setLogin(on) {
+  const exe = exePath(), dir = NL_PATH;
+  try {
+    if (NL_OS === 'Windows') {
+      await sh(on
+        ? `reg add "${LOGIN_KEY}" /v Posture /t REG_SZ /d "\\"${exe}\\" --path=\\"${dir}\\"" /f`
+        : `reg delete "${LOGIN_KEY}" /v Posture /f`);
+    } else {
+      const f = await loginFile();
+      if (!on) await Neutralino.filesystem.remove(f.file);
+      else {
+        await Neutralino.filesystem.createDirectory(f.dir).catch(() => {});
+        await Neutralino.filesystem.writeFile(f.file, NL_OS === 'Darwin'
+          ? `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>app.posturenudge</string>
+  <key>ProgramArguments</key><array><string>${xml(exe)}</string><string>--path=${xml(dir)}</string></array>
+  <key>WorkingDirectory</key><string>${xml(dir)}</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+`
+          : `[Desktop Entry]
+Type=Application
+Name=Posture
+Exec="${exe}" "--path=${dir}"
+Path=${dir}
+X-GNOME-Autostart-enabled=true
+`);
+      }
+    }
+    atLogin = on;
+  } catch {}
+}
 
 // Auto-update: every push to main publishes a release (see .github/workflows/release.yml).
 // The app fetches its manifest with curl (built into Windows 10+, macOS, Linux), swaps in the
@@ -146,7 +204,12 @@ async function checkForUpdate() {
 setTimeout(checkForUpdate, 30000);
 setInterval(checkForUpdate, 6 * 3600000);
 
-load().then(() => { reset(); tray(); });
+load().then(async () => {
+  reset();
+  atLogin = await readLogin();
+  if (atLogin) await setLogin(true);  // refresh, in case the app was moved or updated
+  tray();
+});
 </script>
 </body>
 </html>
