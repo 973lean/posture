@@ -1,21 +1,31 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "app.posturenudge",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "defaultMode": "window",
   "documentRoot": "/resources/",
   "url": "/",
   "enableServer": true,
   "enableNativeAPI": true,
-  "nativeAllowList": ["app.*", "os.showNotification", "window.*"],
+  "nativeAllowList": [
+    "app.*",
+    "os.setTray",
+    "window.*",
+    "storage.*",
+    "events.*"
+  ],
   "modes": {
     "window": {
       "title": "Posture",
       "width": 380,
-      "height": 540,
-      "minWidth": 340,
-      "minHeight": 500,
+      "height": 120,
       "resizable": false,
+      "hidden": true,
+      "skipTaskbar": true,
+      "borderless": true,
+      "transparent": true,
+      "alwaysOnTop": true,
+      "exitProcessOnClose": false,
       "icon": "/resources/icon.png",
       "enableInspector": false
     }

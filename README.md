@@ -1,9 +1,12 @@
 # Posture
 
-A quiet reminder to keep your head back. One screen, one setting, ~2 MB.
+A quiet reminder to keep your head back. No window — it lives in your tray (menu bar on macOS). ~2 MB.
 
-Set the interval, press **Start**. Every interval you get a system notification:
-*Chin back. Head over shoulders.*
+Click the tray icon and check an interval (10–60 min). When it's time, a small card slides in at the
+top of your screen — *Head up. Chin back, ears over shoulders.* — and fades away after a few seconds
+(click to dismiss). Looking up at it is the point.
+
+Tray menu: interval, **Pause**, **Show reminder now**, **Quit**. Your choice is remembered.
 
 ## Download
 
@@ -27,4 +30,3 @@ npx @neutralinojs/neu update
 npx @neutralinojs/neu build --release --embed-resources
 ```
 
-`resources/index.html` also runs on its own in any browser (e.g. GitHub Pages).
