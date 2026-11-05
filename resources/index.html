@@ -73,6 +73,7 @@ function tray() {
       { id: 'test', text: 'Show reminder now' },
       { text: '-' },
       { id: 'quit', text: 'Quit Posture' },
+      { id: 'ver', text: `Version ${NL_APPVERSION}`, isDisabled: true },
     ],
   });
 }
@@ -115,6 +116,35 @@ setInterval(() => {
   if (paused) return;
   if (Date.now() >= nextAt) { reset(); popup(); }
 }, 10000);
+
+// Auto-update: every push to main publishes a release (see .github/workflows/release.yml).
+// The app fetches its manifest with curl (built into Windows 10+, macOS, Linux), swaps in the
+// new resources.neu next to the binary, and restarts while no reminder is on screen.
+const MANIFEST = 'https://github.com/973lean/posture/releases/latest/download/update.json';
+const newer = (a, b) => {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return false;
+};
+async function sh(cmd) {
+  const r = await Neutralino.os.execCommand(cmd);
+  if (r.exitCode !== 0) throw new Error(r.stdErr);
+  return r.stdOut;
+}
+async function checkForUpdate() {
+  try {
+    const m = JSON.parse(await sh(`curl -fsSL "${MANIFEST}"`));
+    if (m.applicationId !== NL_APPID || !newer(m.version, NL_APPVERSION)) return;
+    const target = `${NL_PATH}/resources.neu`, tmp = `${target}.download`;
+    await sh(`curl -fsSL -o "${tmp}" "${m.resourcesURL}"`);
+    await Neutralino.filesystem.remove(target).catch(() => {});
+    await Neutralino.filesystem.move(tmp, target);
+    while (card.classList.contains('in')) await new Promise(r => setTimeout(r, 5000));
+    await Neutralino.app.restartProcess();
+  } catch {}  // offline, read-only folder, etc. — try again next time
+}
+setTimeout(checkForUpdate, 30000);
+setInterval(checkForUpdate, 6 * 3600000);
 
 load().then(() => { reset(); tray(); });
 </script>

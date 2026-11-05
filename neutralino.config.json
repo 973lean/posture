@@ -10,9 +10,12 @@
   "nativeAllowList": [
     "app.*",
     "os.setTray",
+    "os.execCommand",
     "window.*",
     "storage.*",
-    "events.*"
+    "events.*",
+    "filesystem.move",
+    "filesystem.remove"
   ],
   "modes": {
     "window": {

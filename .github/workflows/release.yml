@@ -1,0 +1,54 @@
+name: Release
+
+# Every push to main builds the app and publishes it as the latest release.
+# Installed apps pick it up through update.json.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set version
+        run: |
+          VERSION="2.0.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          jq --arg v "$VERSION" '.version = $v' neutralino.config.json > tmp.json && mv tmp.json neutralino.config.json
+
+      - name: Build
+        run: |
+          npx -y @neutralinojs/neu@11.8.0 update
+          npx -y @neutralinojs/neu@11.8.0 build --release
+
+      - name: Package
+        run: |
+          cd dist/Posture
+          mkdir ../out
+          zip -j ../out/Posture-windows.zip Posture-win_x64.exe resources.neu
+          zip -j ../out/Posture-mac.zip Posture-mac_universal resources.neu
+          zip -j ../out/Posture-linux.zip Posture-linux_x64 resources.neu
+          cp resources.neu ../out/
+          REPO_URL="https://github.com/${{ github.repository }}"
+          jq -n --arg v "$VERSION" --arg u "$REPO_URL/releases/download/v$VERSION/resources.neu" \
+            '{applicationId: "app.posturenudge", version: $v, resourcesURL: $u, data: {}}' > ../out/update.json
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" dist/out/* \
+            --title "Posture $VERSION" \
+            --notes "$(git log -1 --pretty=%s)" \
+            --latest
