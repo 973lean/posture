@@ -44,10 +44,70 @@
   p { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
   .bar.run { transition: transform linear; transform: scaleX(0); }
-  @media (prefers-reduced-motion: reduce) { .card, #shade { transition: none; } .card { transform: none; } }
+  /* Settings panel, opened from the tray. */
+  :root { --hover: rgba(0, 0, 0, .04); --sel: rgba(47, 111, 94, .1); --panel: #fbfaf8; }
+  @media (prefers-color-scheme: dark) { :root { --hover: rgba(255, 255, 255, .05); --sel: rgba(143, 199, 178, .12); --panel: #1c1c1b; } }
+  #panel {
+    position: absolute; inset: 12px; display: none; flex-direction: column;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--edge); border-radius: 2px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .08);
+    opacity: 0; transform: translateY(4px); transition: opacity .2s ease, transform .25s cubic-bezier(.2, .8, .2, 1);
+  }
+  body.panel #panel { display: flex; }
+  body.panel .card, body.panel #shade { display: none; }
+  body.panel.open #panel { opacity: 1; transform: none; }
+  #panel header, #panel footer { display: flex; align-items: center; gap: 16px; padding: 0 18px; }
+  #panel header { height: 50px; border-bottom: 1px solid var(--edge); }
+  #panel footer { height: 46px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--muted); }
+  .brand { font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
+  .spacer { margin-right: auto; }
+  .cols { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); }
+  .col { display: flex; flex-direction: column; padding: 14px 12px 10px; }
+  .col + .col { border-left: 1px solid var(--edge); }
+  .col-head { display: flex; align-items: center; gap: 10px; padding: 0 6px 12px; }
+  .mini { width: 30px; height: 32px; flex: none; color: var(--accent); }
+  .mini svg { width: 100%; height: 100%; display: block; stroke-width: 3.2; }
+  .mini .ghost { color: var(--muted); opacity: .4; stroke-dasharray: 3 2.5; }
+  .mini .plumb { stroke-dasharray: 1.5 3; opacity: .5; }
+  .mini .desk, .mini .cue { color: var(--muted); opacity: .45; }
+  h2 { font-size: 13px; font-weight: 600; }
+  .next { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; }
+  .opts { display: flex; flex-direction: column; gap: 1px; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .opt {
+    display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 10px;
+    border-radius: 2px; font-size: 13px; text-align: left; transition: background .12s;
+  }
+  .opt:hover { background: var(--hover); }
+  .opt[aria-pressed="true"] { background: var(--sel); color: var(--accent); font-weight: 500; }
+  .opt[aria-pressed="true"]::after { content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--accent); }
+  .link { font-size: 12px; color: var(--muted); padding: 4px 0; transition: color .12s; }
+  .link:hover { color: var(--fg); }
+  .col .link { align-self: flex-start; margin: 8px 10px 0; }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .switch { position: relative; width: 28px; height: 16px; border-radius: 2px; background: var(--edge); box-shadow: inset 0 0 0 1px var(--edge); transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 1px; background: var(--muted); transition: transform .18s cubic-bezier(.2, .8, .2, 1), background .15s; }
+  .switch[aria-checked="true"] { background: var(--sel); }
+  .switch[aria-checked="true"]::after { transform: translateX(12px); background: var(--accent); }
+  button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  @media (prefers-reduced-motion: reduce) { .card, #shade, #panel { transition: none; } .card, #panel { transform: none; } }
 </style>
 </head>
 <body>
+  <div id="panel" role="dialog" aria-label="Focus settings">
+    <header>
+      <span class="brand">Focus</span>
+      <span class="toggle">Pause all <button class="switch" id="p-pause" role="switch" aria-checked="false"></button></span>
+    </header>
+    <div class="cols" id="p-cols"></div>
+    <footer>
+      <span class="toggle">Start at login <button class="switch" id="p-login" role="switch" aria-checked="false"></button></span>
+      <span class="spacer"></span>
+      <button class="link" id="p-update">Check for updates</button>
+      <span id="p-ver"></span>
+      <button class="link" id="p-quit">Quit</button>
+    </footer>
+  </div>
   <div id="shade"></div>
   <div class="card" id="card">
     <div class="figure" id="figure"></div>
@@ -113,7 +173,7 @@
 <script src="js/neutralino.js"></script>
 <script>
 const OPTIONS = [15, 20, 30, 45, 60, 90, 120, 0];  // minutes; 0 = off
-const label = m => m === 0 ? 'Off' : m < 60 ? `${m} minutes` : m === 60 ? '1 hour' : m === 90 ? '1½ hours' : `${m / 60} hours`;
+const short = m => m === 0 ? 'Off' : m < 60 ? `${m} min` : m === 90 ? '1.5 hr' : `${m / 60} hr`;
 const SHOW_MS = 7000;
 const MIN_SHOW_MS = 1000;  // clicks and keys can't dismiss it before this
 const $ = id => document.getElementById(id);
@@ -160,7 +220,7 @@ function reminder(type) {
   return { title: t.title, text: t.lines[i], figure: type, focus: true };
 }
 
-let shownAt = 0, active = false, paused = false, atLogin = false, checking = false, hideTimer = null, urls = [];
+let shownAt = 0, active = false, panelOpen = false, openedAt = 0, paused = false, atLogin = false, checking = false, hideTimer = null, urls = [];
 const every = Object.fromEntries(Object.entries(TYPES).map(([k, t]) => [k, t.every]));
 const nextAt = {};
 const queue = [];
@@ -179,26 +239,78 @@ function save() { Neutralino.storage.setData('settings', JSON.stringify({ ...eve
 function reset(type) { nextAt[type] = Date.now() + every[type] * 60000; }
 function resetAll() { for (const k in TYPES) reset(k); }
 
+// The native tray menu stays tiny; everything else lives in the panel, which stays open while you
+// change things and closes when you click elsewhere or press Esc.
 function tray() {
-  const sections = Object.entries(TYPES).flatMap(([k, t]) => [
-    { id: `h:${k}`, text: t.name, isDisabled: true },
-    ...OPTIONS.map(m => ({ id: `${k}:${m}`, text: label(m), isChecked: every[k] === m })),
-    { text: '-' },
-  ]);
   return Neutralino.os.setTray({
     icon: '/resources/tray.png',
     menuItems: [
-      ...sections,
+      { id: 'open', text: 'Open Focus…' },
       { id: 'pause', text: 'Pause all', isChecked: paused },
-      { id: 'test', text: 'Show a reminder now' },
-      { id: 'login', text: 'Start at login', isChecked: atLogin },
       { text: '-' },
-      { id: 'update', text: checking ? 'Checking for updates…' : 'Check for updates', isDisabled: checking },
       { id: 'quit', text: 'Quit' },
-      { id: 'ver', text: `Version ${NL_APPVERSION}`, isDisabled: true },
     ],
   });
 }
+
+function nextText(k) {
+  if (!every[k]) return 'Off';
+  if (paused) return 'Paused';
+  const m = Math.max(0, Math.round((nextAt[k] - Date.now()) / 60000));
+  return m < 1 ? 'Next in under a minute' : m < 60 ? `Next in ${m} min` : `Next in ${Math.floor(m / 60)} hr ${m % 60} min`;
+}
+
+function renderPanel() {
+  $('p-cols').replaceChildren(...Object.entries(TYPES).map(([k, t]) => {
+    const col = document.createElement('section');
+    col.className = 'col';
+    col.innerHTML = `<div class="col-head"><div class="mini"></div><div><h2>${t.name}</h2><span class="next">${nextText(k)}</span></div></div><div class="opts"></div><button class="link">Preview</button>`;
+    col.querySelector('.mini').append($('fig-' + k).content.cloneNode(true));
+    col.querySelector('.opts').append(...OPTIONS.map(m => {
+      const b = document.createElement('button');
+      b.className = 'opt'; b.textContent = short(m); b.setAttribute('aria-pressed', every[k] === m);
+      b.onclick = () => { every[k] = m; reset(k); save(); renderPanel(); };
+      return b;
+    }));
+    col.querySelector('.link').onclick = async () => { await closePanel(); popup(reminder(k)); };
+    return col;
+  }));
+  $('p-pause').setAttribute('aria-checked', paused);
+  $('p-login').setAttribute('aria-checked', atLogin);
+  $('p-ver').textContent = `v${NL_APPVERSION}`;
+}
+
+async function openPanel() {
+  if (active) return;
+  panelOpen = true; openedAt = Date.now();
+  renderPanel();
+  document.body.className = 'panel';
+  const W = 600, H = 448, unit = NL_OS === 'Windows' ? (window.devicePixelRatio || 1) : 1;
+  await Neutralino.window.setSize({ width: W, height: H });
+  // Open next to where the tray was clicked: above it on Windows/Linux, below the menu bar on macOS.
+  try {
+    const m = await Neutralino.computer.getMousePosition();
+    const x = Math.max(8, Math.round(m.x - W * unit + 40 * unit));
+    const y = Math.max(8, Math.round(NL_OS === 'Darwin' ? m.y + 8 * unit : m.y - H * unit - 8 * unit));
+    await Neutralino.window.move(x, y);
+  } catch { await Neutralino.window.center(); }
+  await Neutralino.window.show();
+  await Neutralino.window.focus();
+  requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+async function closePanel() {
+  if (!panelOpen) return;
+  panelOpen = false;
+  document.body.classList.remove('open');
+  await new Promise(r => setTimeout(r, 200));
+  if (!active) { await Neutralino.window.hide(); document.body.className = ''; setTimeout(next, 800); }
+}
+
+$('p-pause').onclick = () => { paused = !paused; resetAll(); save(); tray(); renderPanel(); };
+$('p-login').onclick = () => setLogin(!atLogin).then(renderPanel);
+$('p-update').onclick = () => manualUpdate();
+$('p-quit').onclick = () => Neutralino.app.exit();
 
 // Snapshot every monitor just before the reminder shows, so the card can sit on a blurred
 // copy of the whole desktop. Returns coordinates in native window units, or null.
@@ -247,6 +359,7 @@ async function popup(r) {
 async function show({ title, text, figure = 'posture', focus }) {
   clearTimeout(hideTimer);
   active = true;
+  document.body.classList.remove('panel', 'open');
   shownAt = Date.now();
   $('figure').replaceChildren($('fig-' + figure).content.cloneNode(true));
   $('title').textContent = title;
@@ -306,31 +419,22 @@ function dismiss() {
 
 // Reminders due at the same time wait their turn instead of overlapping.
 function next() {
-  if (!active && queue.length) popup(reminder(queue.shift()));
+  if (!active && !panelOpen && queue.length) popup(reminder(queue.shift()));
 }
 
-function userDismiss() { if (Date.now() - shownAt >= MIN_SHOW_MS) dismiss(); }
+function userDismiss() { if (active && !panelOpen && Date.now() - shownAt >= MIN_SHOW_MS) dismiss(); }
 document.addEventListener('click', userDismiss);
-document.addEventListener('keydown', userDismiss);
+document.addEventListener('keydown', e => { if (panelOpen) { if (e.key === 'Escape') closePanel(); } else userDismiss(); });
+// Click outside the panel (the window loses focus) closes it.
+Neutralino.events.on('windowBlur', () => { if (panelOpen && Date.now() - openedAt > 400) closePanel(); });
 
 Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
+  if (id === 'open') return openPanel();
   if (id === 'quit') return Neutralino.app.exit();
-  if (id === 'test') {
-    const on = Object.keys(TYPES).filter(k => every[k]);
-    return popup(reminder(on.length ? on[Math.floor(Math.random() * on.length)] : 'posture'));
-  }
-  if (id === 'login') return setLogin(!atLogin).then(tray);
-  if (id === 'update') return manualUpdate();
-  if (id === 'pause') { paused = !paused; resetAll(); }
-  else {
-    const [type, m] = (id || '').split(':');
-    if (!(type in TYPES) || !OPTIONS.includes(+m)) return;
-    every[type] = +m; reset(type);
-  }
-  save(); tray();
+  if (id === 'pause') { paused = !paused; resetAll(); save(); tray(); if (panelOpen) renderPanel(); }
 });
 
-Neutralino.events.on('windowClose', userDismiss);
+Neutralino.events.on('windowClose', () => (panelOpen ? closePanel() : userDismiss()));
 
 // Check every 10s against the clock, so throttled timers or sleep never drift the schedule.
 setInterval(() => {
@@ -341,6 +445,7 @@ setInterval(() => {
     if (!queue.includes(k)) queue.push(k);
   }
   next();
+  if (panelOpen) renderPanel();
 }, 10000);
 
 // Start at login: a Run registry value (Windows), a LaunchAgent (macOS) or an autostart
@@ -431,11 +536,12 @@ async function checkForUpdate(onFound) {
 
 async function manualUpdate() {
   if (checking) return;
-  checking = true; tray();
-  const result = await checkForUpdate(v => popup({ title: `Updating to ${v}`, text: 'Restarting in a moment.' }));
-  checking = false; tray();
-  if (result === 'current') popup({ title: 'You’re up to date', text: `Version ${NL_APPVERSION}` });
-  if (result === 'failed') popup({ title: 'Couldn’t check for updates', text: 'Check your connection and try again.' });
+  const btn = $('p-update'), say = t => { btn.textContent = t; };
+  checking = true; say('Checking…');
+  const result = await checkForUpdate(v => { say(`Updating to ${v}…`); return new Promise(r => setTimeout(r, 1200)); });
+  checking = false;
+  say(result === 'current' ? 'Up to date' : result === 'failed' ? 'Couldn’t check' : 'Restarting…');
+  setTimeout(() => say('Check for updates'), 3000);
 }
 setTimeout(() => checkForUpdate(), 30000);
 setInterval(() => checkForUpdate(), 6 * 3600000);

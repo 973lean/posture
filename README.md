@@ -13,7 +13,9 @@ screen with every monitor softly blurred behind it (a snapshot taken the moment 
 asks for Screen Recording permission once). It stays at least 1 s, then click or press any key to
 dismiss; it fades on its own after 7 s. Reminders due together wait their turn.
 
-Tray menu: an interval list per reminder, **Pause all**, **Show a reminder now**, **Start at login**,
+Click the tray icon → **Open Focus…** for the settings panel: three columns (Posture, Water, Walk),
+each with its interval list, time until the next reminder and a Preview. It stays open while you
+change things; click elsewhere or press Esc to close it. Also there: **Pause all**, **Start at login**,
 **Check for updates**, **Quit**. Your choices are remembered.
 
 ## Download

@@ -20,7 +20,8 @@
     "filesystem.writeFile",
     "filesystem.createDirectory",
     "filesystem.getStats",
-    "filesystem.readBinaryFile"
+    "filesystem.readBinaryFile",
+    "computer.getMousePosition"
   ],
   "modes": {
     "window": {
