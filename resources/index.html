@@ -76,6 +76,7 @@
 <script>
 const OPTIONS = [10, 15, 20, 30, 45, 60];
 const SHOW_MS = 7000;
+const MIN_SHOW_MS = 1000;  // clicks and keys can't dismiss it before this
 const $ = id => document.getElementById(id);
 const card = $('card'), bar = $('bar'), shade = $('shade');
 const LINES = [
@@ -93,7 +94,7 @@ function reminder() {
   return { title: 'Head up.', text: LINES[i], focus: true };
 }
 
-let mins = 20, paused = false, atLogin = false, checking = false, nextAt = 0, hideTimer = null, urls = [];
+let shownAt = 0, mins = 20, paused = false, atLogin = false, checking = false, nextAt = 0, hideTimer = null, urls = [];
 
 Neutralino.init();
 
@@ -163,6 +164,7 @@ async function capture() {
 
 async function popup({ title, text, focus } = reminder()) {
   clearTimeout(hideTimer);
+  shownAt = Date.now();
   $('title').textContent = title;
   $('text').textContent = text;
 
@@ -201,6 +203,7 @@ async function popup({ title, text, focus } = reminder()) {
     document.body.classList.add('in');
     bar.style.transitionDuration = SHOW_MS + 'ms'; bar.className = 'bar run';
   });
+  shownAt = Date.now();
   hideTimer = setTimeout(dismiss, SHOW_MS);
 }
 
@@ -212,8 +215,9 @@ function dismiss() {
   setTimeout(() => { if (!showing()) Neutralino.window.hide(); }, 500);
 }
 
-document.addEventListener('click', dismiss);
-document.addEventListener('keydown', dismiss);
+function userDismiss() { if (Date.now() - shownAt >= MIN_SHOW_MS) dismiss(); }
+document.addEventListener('click', userDismiss);
+document.addEventListener('keydown', userDismiss);
 
 Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
   if (id === 'quit') return Neutralino.app.exit();
@@ -225,7 +229,7 @@ Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
   reset(); save(); tray();
 });
 
-Neutralino.events.on('windowClose', dismiss);
+Neutralino.events.on('windowClose', userDismiss);
 
 // Check every 10s against the clock, so throttled timers or sleep never drift the schedule.
 setInterval(() => {
