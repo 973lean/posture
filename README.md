@@ -1,14 +1,20 @@
 # Posture
 
-A quiet reminder to keep your head back. No window — it lives in your tray (menu bar on macOS). ~2 MB.
+A quiet focus companion that lives in your tray (menu bar on macOS). No window, ~2 MB.
 
-Click the tray icon and check an interval (10–60 min). When it's time, a small card slides in at the
-top of your screen — *Head up. Chin back, ears over shoulders.* — and fades away after a few seconds
-(click to dismiss). Looking up at it is the point.
+Three gentle reminders, each with its own interval (15 min – 2 hours, or Off):
 
-Tray menu: interval, **Pause**, **Show reminder now**, **Start at login**, **Check for updates**, **Quit**.
+- **Posture** — *Head up.* Bad posture causes a forward-leaning neck.
+- **Water** — *Drink some water.* Even mild dehydration can dull your focus.
+- **Walk** — *Time for a walk.* A few minutes on your feet resets your focus.
 
-The reminder appears in the middle of your main screen with every monitor softly blurred behind it (a snapshot taken the moment it appears; macOS asks for Screen Recording permission once). Click or press any key to dismiss. Your choice is remembered.
+When one is due, a small card with a stick-figure illustration appears in the middle of your main
+screen with every monitor softly blurred behind it (a snapshot taken the moment it appears; macOS
+asks for Screen Recording permission once). It stays at least 1 s, then click or press any key to
+dismiss; it fades on its own after 7 s. Reminders due together wait their turn.
+
+Tray menu: an interval list per reminder, **Pause all**, **Show a reminder now**, **Start at login**,
+**Check for updates**, **Quit**. Your choices are remembered.
 
 ## Download
 
