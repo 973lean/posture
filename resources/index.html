@@ -7,9 +7,11 @@
   :root {
     --card: rgba(252, 251, 249, .94); --fg: #1b1b1a; --muted: #85837e; --edge: rgba(0, 0, 0, .06);
     --accent: #2f6f5e; --shadow: 0 10px 30px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .08);
+    /* One colour per reminder. Walk is white in dark mode; in light mode it's graphite so it stays visible. */
+    --posture: #2f6f5e; --water: #2563b8; --walk: #3b3b39;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --card: rgba(28, 28, 27, .92); --fg: #efeeeb; --muted: #8b8984; --edge: rgba(255, 255, 255, .08); --accent: #8fc7b2; --shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+    :root { --card: rgba(28, 28, 27, .92); --fg: #efeeeb; --muted: #8b8984; --edge: rgba(255, 255, 255, .08); --accent: #8fc7b2; --shadow: 0 10px 30px rgba(0, 0, 0, .5); --posture: #8fc7b2; --water: #7fb2f0; --walk: #f4f3f0; }
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; background: transparent; overflow: hidden; }
@@ -45,8 +47,9 @@
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
   .bar.run { transition: transform linear; transform: scaleX(0); }
   /* Settings panel, opened from the tray. */
-  :root { --hover: rgba(0, 0, 0, .04); --sel: rgba(47, 111, 94, .1); --panel: #fbfaf8; }
-  @media (prefers-color-scheme: dark) { :root { --hover: rgba(255, 255, 255, .05); --sel: rgba(143, 199, 178, .12); --panel: #1c1c1b; } }
+  :root { --hover: rgba(0, 0, 0, .04); --panel: #fbfaf8; }
+  .col, .card { --sel: color-mix(in srgb, var(--accent) 12%, transparent); }
+  @media (prefers-color-scheme: dark) { :root { --hover: rgba(255, 255, 255, .05); --panel: #1c1c1b; } }
   #panel {
     position: absolute; inset: 12px; display: none; flex-direction: column;
     background: var(--panel); color: var(--fg); border: 1px solid var(--edge); border-radius: 2px;
@@ -81,6 +84,26 @@
   .opt:hover { background: var(--hover); }
   .opt[aria-pressed="true"] { background: var(--sel); color: var(--accent); font-weight: 500; }
   .opt[aria-pressed="true"]::after { content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--accent); }
+  .row { position: relative; }
+  .row .opt { width: 100%; }
+  .row .x {
+    position: absolute; right: 4px; top: 4px; width: 20px; height: 20px; border-radius: 2px;
+    color: var(--muted); font-size: 14px; line-height: 20px; opacity: 0; transition: opacity .12s, background .12s;
+  }
+  .row:hover .x, .row .x:focus-visible { opacity: 1; }
+  .row .x:hover { background: var(--hover); color: var(--fg); }
+  .row:hover .opt[aria-pressed="true"]::after { opacity: 0; }
+  .custom {
+    width: 100%; height: 30px; margin-bottom: 6px; padding: 0 10px; border-radius: 2px;
+    border: 1px solid var(--edge); background: transparent; color: var(--fg); font: inherit; font-size: 13px; outline: none;
+    transition: border-color .12s;
+  }
+  .custom::placeholder { color: var(--muted); }
+  .custom:focus { border-color: var(--accent); }
+  .custom.bad { border-color: #c0533e; animation: nudge .3s; }
+  @keyframes nudge { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+  .saved { display: flex; flex-direction: column; gap: 1px; min-height: 145px; }
+  .opts .off { margin-top: 4px; border-top: 1px solid var(--edge); padding-top: 4px; }
   .link { font-size: 12px; color: var(--muted); padding: 4px 0; transition: color .12s; }
   .link:hover { color: var(--fg); }
   .col .link { align-self: flex-start; margin: 8px 10px 0; }
@@ -172,8 +195,15 @@
 
 <script src="js/neutralino.js"></script>
 <script>
-const OPTIONS = [15, 20, 30, 45, 60, 90, 120, 0];  // minutes; 0 = off
-const short = m => m === 0 ? 'Off' : m < 60 ? `${m} min` : m === 90 ? '1.5 hr' : `${m / 60} hr`;
+const MAX_SAVED = 5;
+const short = m => m === 0 ? 'Off' : m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} hr ${m % 60} min` : `${m / 60} hr`;
+// "25", "25m", "1.5h", "2 hr" → minutes (1 min – 12 hr), or null.
+function parseMinutes(v) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?\s*$/i.exec(v);
+  if (!m) return null;
+  const n = Math.round(parseFloat(m[1]) * (/^h/i.test(m[2] || '') ? 60 : 1));
+  return n >= 1 && n <= 720 ? n : null;
+}
 const SHOW_MS = 7000;
 const MIN_SHOW_MS = 1000;  // clicks and keys can't dismiss it before this
 const $ = id => document.getElementById(id);
@@ -181,7 +211,7 @@ const card = $('card'), bar = $('bar'), shade = $('shade');
 
 const TYPES = {
   posture: {
-    name: 'Posture', every: 20, title: 'Head up.',
+    name: 'Posture', every: 20, saved: [20, 30, 45], title: 'Head up.',
     lines: [
       'Bad posture causes a forward-leaning neck.',
       'Forward head posture strains your neck.',
@@ -192,7 +222,7 @@ const TYPES = {
     ],
   },
   water: {
-    name: 'Water', every: 45, title: 'Drink some water.',
+    name: 'Water', every: 45, saved: [30, 45, 60], title: 'Drink some water.',
     lines: [
       'Even mild dehydration can dull your focus.',
       'Sip before you feel thirsty.',
@@ -202,7 +232,7 @@ const TYPES = {
     ],
   },
   walk: {
-    name: 'Walk', every: 60, title: 'Time for a walk.',
+    name: 'Walk', every: 60, saved: [60, 90], title: 'Time for a walk.',
     lines: [
       'A few minutes on your feet resets your focus.',
       'Hours of sitting stiffen your back and hips.',
@@ -222,6 +252,7 @@ function reminder(type) {
 
 let shownAt = 0, active = false, panelOpen = false, openedAt = 0, paused = false, atLogin = false, checking = false, hideTimer = null, urls = [];
 const every = Object.fromEntries(Object.entries(TYPES).map(([k, t]) => [k, t.every]));
+const saved = Object.fromEntries(Object.entries(TYPES).map(([k, t]) => [k, [...t.saved]]));
 const nextAt = {};
 const queue = [];
 
@@ -231,11 +262,17 @@ async function load() {
   try {
     const s = JSON.parse(await Neutralino.storage.getData('settings'));
     if (s.mins) s.posture = s.mins;  // settings from the posture-only version
-    for (const k in TYPES) if (OPTIONS.includes(s[k])) every[k] = s[k];
+    for (const k in TYPES) {
+      if (Array.isArray(s.saved?.[k])) saved[k] = s.saved[k].filter(n => parseMinutes(String(n))).slice(0, MAX_SAVED);
+      if (typeof s[k] === 'number' && (s[k] === 0 || parseMinutes(String(s[k])))) every[k] = s[k];
+      // Keep the active interval in the list (older versions had a fixed list).
+      if (every[k] && !saved[k].includes(every[k])) saved[k] = [...saved[k], every[k]].slice(-MAX_SAVED);
+      saved[k].sort((a, b) => a - b);
+    }
     paused = !!s.paused;
   } catch {}
 }
-function save() { Neutralino.storage.setData('settings', JSON.stringify({ ...every, paused })).catch(() => {}); }
+function save() { Neutralino.storage.setData('settings', JSON.stringify({ ...every, saved, paused })).catch(() => {}); }
 function reset(type) { nextAt[type] = Date.now() + every[type] * 60000; }
 function resetAll() { for (const k in TYPES) reset(k); }
 
@@ -260,19 +297,53 @@ function nextText(k) {
   return m < 1 ? 'Next in under a minute' : m < 60 ? `Next in ${m} min` : `Next in ${Math.floor(m / 60)} hr ${m % 60} min`;
 }
 
+function optButton(k, m) {
+  const b = document.createElement('button');
+  b.className = 'opt'; b.textContent = short(m); b.setAttribute('aria-pressed', every[k] === m);
+  b.onclick = () => { every[k] = m; reset(k); save(); renderPanel(); };
+  return b;
+}
+
 function renderPanel() {
   $('p-cols').replaceChildren(...Object.entries(TYPES).map(([k, t]) => {
     const col = document.createElement('section');
     col.className = 'col';
-    col.innerHTML = `<div class="col-head"><div class="mini"></div><div><h2>${t.name}</h2><span class="next">${nextText(k)}</span></div></div><div class="opts"></div><button class="link">Preview</button>`;
+    col.style.setProperty('--accent', `var(--${k})`);
+    col.innerHTML = `<div class="col-head"><div class="mini"></div><div><h2>${t.name}</h2><span class="next" data-k="${k}">${nextText(k)}</span></div></div>
+      <div class="opts"><input class="custom" maxlength="12" spellcheck="false" aria-label="Custom ${t.name.toLowerCase()} interval"><div class="saved"></div></div>`;
     col.querySelector('.mini').append($('fig-' + k).content.cloneNode(true));
-    col.querySelector('.opts').append(...OPTIONS.map(m => {
-      const b = document.createElement('button');
-      b.className = 'opt'; b.textContent = short(m); b.setAttribute('aria-pressed', every[k] === m);
-      b.onclick = () => { every[k] = m; reset(k); save(); renderPanel(); };
-      return b;
+
+    const input = col.querySelector('.custom');
+    const full = saved[k].length >= MAX_SAVED;
+    input.placeholder = full ? `Max ${MAX_SAVED} saved` : 'Custom';
+    input.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      const n = parseMinutes(input.value);
+      if (!n || (!saved[k].includes(n) && saved[k].length >= MAX_SAVED)) {
+        input.classList.remove('bad'); void input.offsetWidth; input.classList.add('bad');
+        return;
+      }
+      if (!saved[k].includes(n)) saved[k] = [...saved[k], n].sort((a, b) => a - b);
+      every[k] = n; reset(k); save(); renderPanel();
+    };
+    input.oninput = () => input.classList.remove('bad');
+
+    col.querySelector('.saved').append(...saved[k].map(m => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const x = document.createElement('button');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Remove'; x.setAttribute('aria-label', `Remove ${short(m)}`);
+      x.onclick = () => {
+        saved[k] = saved[k].filter(v => v !== m);
+        if (every[k] === m) every[k] = 0;
+        reset(k); save(); renderPanel();
+      };
+      row.append(optButton(k, m), x);
+      return row;
     }));
-    col.querySelector('.link').onclick = async () => { await closePanel(); popup(reminder(k)); };
+    const off = optButton(k, 0);
+    off.classList.add('off');
+    col.querySelector('.opts').append(off);
     return col;
   }));
   $('p-pause').setAttribute('aria-checked', paused);
@@ -280,12 +351,15 @@ function renderPanel() {
   $('p-ver').textContent = `v${NL_APPVERSION}`;
 }
 
+// Refresh only the countdowns, so a half-typed custom value isn't wiped.
+function updateNext() { document.querySelectorAll('.next[data-k]').forEach(el => { el.textContent = nextText(el.dataset.k); }); }
+
 async function openPanel() {
   if (active) return;
   panelOpen = true; openedAt = Date.now();
   renderPanel();
   document.body.className = 'panel';
-  const W = 600, H = 448, unit = NL_OS === 'Windows' ? (window.devicePixelRatio || 1) : 1;
+  const W = 600, H = 400, unit = NL_OS === 'Windows' ? (window.devicePixelRatio || 1) : 1;
   await Neutralino.window.setSize({ width: W, height: H });
   // Open next to where the tray was clicked: above it on Windows/Linux, below the menu bar on macOS.
   try {
@@ -362,6 +436,7 @@ async function show({ title, text, figure = 'posture', focus }) {
   document.body.classList.remove('panel', 'open');
   shownAt = Date.now();
   $('figure').replaceChildren($('fig-' + figure).content.cloneNode(true));
+  card.style.setProperty('--accent', `var(--${figure})`);
   $('title').textContent = title;
   $('text').textContent = text;
 
@@ -445,7 +520,7 @@ setInterval(() => {
     if (!queue.includes(k)) queue.push(k);
   }
   next();
-  if (panelOpen) renderPanel();
+  if (panelOpen) updateNext();
 }, 10000);
 
 // Start at login: a Run registry value (Windows), a LaunchAgent (macOS) or an autostart

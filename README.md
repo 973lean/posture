@@ -2,7 +2,7 @@
 
 A quiet focus companion that lives in your tray (menu bar on macOS). No window, ~2 MB.
 
-Three gentle reminders, each with its own interval (15 min – 2 hours, or Off):
+Three gentle reminders, each with its own colour and interval:
 
 - **Posture** — *Head up.* Bad posture causes a forward-leaning neck.
 - **Water** — *Drink some water.* Even mild dehydration can dull your focus.
@@ -13,8 +13,9 @@ screen with every monitor softly blurred behind it (a snapshot taken the moment 
 asks for Screen Recording permission once). It stays at least 1 s, then click or press any key to
 dismiss; it fades on its own after 7 s. Reminders due together wait their turn.
 
-Click the tray icon → **Open Focus…** for the settings panel: three columns (Posture, Water, Walk),
-each with its interval list, time until the next reminder and a Preview. It stays open while you
+Click the tray icon → **Open Focus…** for the settings panel: three columns (Posture, Water, Walk).
+Type a time in **Custom** (`25`, `90`, `1.5h`) and press Enter to save and select it — up to 5 saved
+times per reminder (hover one and click × to remove it), plus **Off**. The panel stays open while you
 change things; click elsewhere or press Esc to close it. Also there: **Pause all**, **Start at login**,
 **Check for updates**, **Quit**. Your choices are remembered.
 
