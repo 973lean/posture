@@ -16,32 +16,40 @@
   body {
     font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased; user-select: none; cursor: default;
-    display: flex; align-items: center; justify-content: center; padding: 14px;
   }
+
+  /* Focus layer: a blurred snapshot of every monitor, shown behind the card. */
+  #shade { position: fixed; inset: 0; display: none; opacity: 0; background: rgba(18, 18, 18, .16); transition: opacity .5s ease; }
+  #shade img { position: absolute; filter: blur(14px) saturate(1.05); }
+  body.focus #shade { display: block; }
+  body.in #shade { opacity: 1; }
+
   .card {
-    position: relative; overflow: hidden; width: 100%; height: 100%;
-    display: flex; align-items: center; gap: 16px; padding: 0 22px;
+    position: absolute; width: 352px; height: 92px; left: calc(50% - 176px); top: calc(50% - 46px);
+    overflow: hidden; display: flex; align-items: center; gap: 16px; padding: 0 22px;
     background: var(--card); color: var(--fg); border: 1px solid var(--edge); border-radius: 18px;
     box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(1.4);
-    opacity: 0; transform: translateY(-8px) scale(.98);
+    opacity: 0; transform: translateY(6px) scale(.98);
     transition: opacity .35s ease, transform .45s cubic-bezier(.2, .8, .2, 1);
   }
-  .card.in { opacity: 1; transform: none; }
+  body.focus .card { box-shadow: 0 24px 60px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .1); }
+  body.in .card { opacity: 1; transform: none; }
   .mark { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--accent); display: grid; place-items: center; }
   .mark::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
   h1 { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
   p { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
   .bar.run { transition: transform linear; transform: scaleX(0); }
-  @media (prefers-reduced-motion: reduce) { .card { transition: none; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .card, #shade { transition: none; } .card { transform: none; } }
 </style>
 </head>
 <body>
+  <div id="shade"></div>
   <div class="card" id="card">
     <div class="mark"></div>
     <div>
-      <h1>Head up.</h1>
-      <p>Chin back, ears over shoulders.</p>
+      <h1 id="title">Head up.</h1>
+      <p id="text">Chin back, ears over shoulders.</p>
     </div>
     <div class="bar" id="bar"></div>
   </div>
@@ -50,9 +58,11 @@
 <script>
 const OPTIONS = [10, 15, 20, 30, 45, 60];
 const SHOW_MS = 7000;
-const card = document.getElementById('card'), bar = document.getElementById('bar');
+const $ = id => document.getElementById(id);
+const card = $('card'), bar = $('bar'), shade = $('shade');
+const REMINDER = { title: 'Head up.', text: 'Chin back, ears over shoulders.', focus: true };
 
-let mins = 20, paused = false, atLogin = false, nextAt = 0, hideTimer = null;
+let mins = 20, paused = false, atLogin = false, checking = false, nextAt = 0, hideTimer = null, urls = [];
 
 Neutralino.init();
 
@@ -73,39 +83,112 @@ function tray() {
       { id: 'test', text: 'Show reminder now' },
       { id: 'login', text: 'Start at login', isChecked: atLogin },
       { text: '-' },
+      { id: 'update', text: checking ? 'Checking for updates…' : 'Check for updates', isDisabled: checking },
       { id: 'quit', text: 'Quit Posture' },
       { id: 'ver', text: `Version ${NL_APPVERSION}`, isDisabled: true },
     ],
   });
 }
 
-async function popup() {
+// Snapshot every monitor just before the reminder shows, so the card can sit on a blurred
+// copy of the whole desktop. Returns coordinates in native window units, or null.
+async function tmpDir() { return NL_OS === 'Windows' ? Neutralino.os.getEnv('TEMP') : '/tmp'; }
+const PS_SHOT = [
+  'Add-Type -AssemblyName System.Windows.Forms, System.Drawing',
+  'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public class Dpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }\'',
+  '[Dpi]::SetProcessDPIAware() | Out-Null',
+  '$v = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+  '$p = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+  '$full = New-Object System.Drawing.Bitmap $v.Width, $v.Height',
+  '[System.Drawing.Graphics]::FromImage($full).CopyFromScreen($v.Left, $v.Top, 0, 0, $full.Size)',
+  '$small = New-Object System.Drawing.Bitmap ([int]($v.Width / 4)), ([int]($v.Height / 4))',
+  '[System.Drawing.Graphics]::FromImage($small).DrawImage($full, 0, 0, $small.Width, $small.Height)',
+  '$small.Save($args[0], [System.Drawing.Imaging.ImageFormat]::Jpeg)',
+  '($v.Left, $v.Top, $v.Width, $v.Height, $p.Left, $p.Top, $p.Width, $p.Height) -join " "',
+].join('\r\n');
+const JXA_SCREENS = 'ObjC.import("AppKit");var s=$.NSScreen.screens,o=[];for(var i=0;i<s.count;i++){var f=s.objectAtIndex(i).frame;o.push([f.origin.x,f.origin.y,f.size.width,f.size.height].join(" "))}o.join(";")';
+
+async function capture() {
+  const tmp = await tmpDir();
+  if (NL_OS === 'Windows') {
+    const ps = `${tmp}\\posture-shot.ps1`, jpg = `${tmp}\\posture-shot.jpg`;
+    await Neutralino.filesystem.writeFile(ps, PS_SHOT);
+    const n = (await sh(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${ps}" "${jpg}"`)).trim().split(/\s+/).map(Number);
+    const virt = { x: n[0], y: n[1], w: n[2], h: n[3] };
+    return { virt, primary: { x: n[4], y: n[5], w: n[6], h: n[7] }, shots: [{ file: jpg, ...virt }], unit: window.devicePixelRatio || 1 };
+  }
+  if (NL_OS === 'Darwin') {
+    // NSScreen frames are bottom-left based; flip to top-left using the main screen.
+    const raw = (await sh(`osascript -l JavaScript -e '${JXA_SCREENS}'`)).trim().split(';').map(l => l.split(' ').map(Number));
+    const mainH = raw[0][3];
+    const screens = raw.map(([x, y, w, h], i) => ({ x, y: mainH - (y + h), w, h, file: `${tmp}/posture-shot-${i}.jpg` }));
+    await sh(`screencapture -x -t jpg ${screens.map(s => `"${s.file}"`).join(' ')}`);
+    const x = Math.min(...screens.map(s => s.x)), y = Math.min(...screens.map(s => s.y));
+    const virt = { x, y, w: Math.max(...screens.map(s => s.x + s.w)) - x, h: Math.max(...screens.map(s => s.y + s.h)) - y };
+    return { virt, primary: screens[0], shots: screens, unit: 1 };
+  }
+  return null;
+}
+
+async function popup({ title, text, focus } = REMINDER) {
   clearTimeout(hideTimer);
-  // Center first so x is right in native units, then lift to the top of the screen.
-  await Neutralino.window.center();
-  const { x } = await Neutralino.window.getPosition();
-  await Neutralino.window.move(x, 36);
+  $('title').textContent = title;
+  $('text').textContent = text;
+
+  const cap = focus ? await capture().catch(() => null) : null;
+  urls.forEach(URL.revokeObjectURL); urls = [];
+  shade.replaceChildren();
+
+  if (cap) {
+    const { virt, primary, shots, unit } = cap;
+    const css = v => v / unit;
+    for (const s of shots) {
+      const img = new Image();
+      const url = URL.createObjectURL(new Blob([await Neutralino.filesystem.readBinaryFile(s.file)], { type: 'image/jpeg' }));
+      urls.push(url);
+      Object.assign(img.style, { left: css(s.x - virt.x) + 'px', top: css(s.y - virt.y) + 'px', width: css(s.w) + 'px', height: css(s.h) + 'px' });
+      img.src = url;
+      shade.append(img);
+    }
+    card.style.left = css(primary.x - virt.x + primary.w / 2) - 176 + 'px';
+    card.style.top = css(primary.y - virt.y + primary.h / 2) - 46 + 'px';
+    document.body.classList.add('focus');
+    await Neutralino.window.move(virt.x, virt.y);
+    await Neutralino.window.setSize({ width: virt.w, height: virt.h });
+  } else {
+    card.style.left = card.style.top = '';
+    document.body.classList.remove('focus');
+    await Neutralino.window.setSize({ width: 380, height: 120 });
+    await Neutralino.window.center();
+  }
+
   await Neutralino.window.show();
   await Neutralino.window.setAlwaysOnTop(true);
 
   bar.className = 'bar'; bar.style.transitionDuration = ''; void bar.offsetWidth;
-  card.classList.add('in');
-  requestAnimationFrame(() => { bar.style.transitionDuration = SHOW_MS + 'ms'; bar.className = 'bar run'; });
+  requestAnimationFrame(() => {
+    document.body.classList.add('in');
+    bar.style.transitionDuration = SHOW_MS + 'ms'; bar.className = 'bar run';
+  });
   hideTimer = setTimeout(dismiss, SHOW_MS);
 }
 
+function showing() { return document.body.classList.contains('in'); }
+
 function dismiss() {
   clearTimeout(hideTimer);
-  card.classList.remove('in');
-  setTimeout(() => Neutralino.window.hide(), 400);
+  document.body.classList.remove('in');
+  setTimeout(() => { if (!showing()) Neutralino.window.hide(); }, 500);
 }
 
-card.addEventListener('click', dismiss);
+document.addEventListener('click', dismiss);
+document.addEventListener('keydown', dismiss);
 
 Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
   if (id === 'quit') return Neutralino.app.exit();
-  if (id === 'test') return popup();
+  if (id === 'test') return popup(REMINDER);
   if (id === 'login') return setLogin(!atLogin).then(tray);
+  if (id === 'update') return manualUpdate();
   if (id === 'pause') paused = !paused;
   else if (id?.startsWith('m')) { mins = +id.slice(1); paused = false; }
   reset(); save(); tray();
@@ -116,7 +199,7 @@ Neutralino.events.on('windowClose', dismiss);
 // Check every 10s against the clock, so throttled timers or sleep never drift the schedule.
 setInterval(() => {
   if (paused) return;
-  if (Date.now() >= nextAt) { reset(); popup(); }
+  if (Date.now() >= nextAt) { reset(); popup(REMINDER); }
 }, 10000);
 
 // Start at login: a Run registry value (Windows), a LaunchAgent (macOS) or an autostart
@@ -189,20 +272,32 @@ async function sh(cmd) {
   if (r.exitCode !== 0) throw new Error(r.stdErr);
   return r.stdOut;
 }
-async function checkForUpdate() {
+// Returns 'current', 'updating' or 'failed'.
+async function checkForUpdate(onFound) {
   try {
     const m = JSON.parse(await sh(`curl -fsSL "${MANIFEST}"`));
-    if (m.applicationId !== NL_APPID || !newer(m.version, NL_APPVERSION)) return;
+    if (m.applicationId !== NL_APPID || !newer(m.version, NL_APPVERSION)) return 'current';
     const target = `${NL_PATH}/resources.neu`, tmp = `${target}.download`;
     await sh(`curl -fsSL -o "${tmp}" "${m.resourcesURL}"`);
     await Neutralino.filesystem.remove(target).catch(() => {});
     await Neutralino.filesystem.move(tmp, target);
-    while (card.classList.contains('in')) await new Promise(r => setTimeout(r, 5000));
+    if (onFound) await onFound(m.version);
+    while (showing()) await new Promise(r => setTimeout(r, 1000));
     await Neutralino.app.restartProcess();
-  } catch {}  // offline, read-only folder, etc. — try again next time
+    return 'updating';
+  } catch { return 'failed'; }  // offline, read-only folder, etc. — try again next time
 }
-setTimeout(checkForUpdate, 30000);
-setInterval(checkForUpdate, 6 * 3600000);
+
+async function manualUpdate() {
+  if (checking) return;
+  checking = true; tray();
+  const result = await checkForUpdate(v => popup({ title: `Updating to ${v}`, text: 'Posture will restart in a moment.' }));
+  checking = false; tray();
+  if (result === 'current') popup({ title: 'You’re up to date', text: `Posture ${NL_APPVERSION}` });
+  if (result === 'failed') popup({ title: 'Couldn’t check for updates', text: 'Check your connection and try again.' });
+}
+setTimeout(() => checkForUpdate(), 30000);
+setInterval(() => checkForUpdate(), 6 * 3600000);
 
 load().then(async () => {
   reset();

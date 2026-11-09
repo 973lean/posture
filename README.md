@@ -6,7 +6,9 @@ Click the tray icon and check an interval (10–60 min). When it's time, a small
 top of your screen — *Head up. Chin back, ears over shoulders.* — and fades away after a few seconds
 (click to dismiss). Looking up at it is the point.
 
-Tray menu: interval, **Pause**, **Show reminder now**, **Start at login**, **Quit**. Your choice is remembered.
+Tray menu: interval, **Pause**, **Show reminder now**, **Start at login**, **Check for updates**, **Quit**.
+
+The reminder appears in the middle of your main screen with every monitor softly blurred behind it (a snapshot taken the moment it appears; macOS asks for Screen Recording permission once). Click or press any key to dismiss. Your choice is remembered.
 
 ## Download
 

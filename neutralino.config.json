@@ -19,7 +19,8 @@
     "filesystem.remove",
     "filesystem.writeFile",
     "filesystem.createDirectory",
-    "filesystem.getStats"
+    "filesystem.getStats",
+    "filesystem.readBinaryFile"
   ],
   "modes": {
     "window": {
