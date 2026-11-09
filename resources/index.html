@@ -25,17 +25,20 @@
   body.in #shade { opacity: 1; }
 
   .card {
-    position: absolute; width: 352px; height: 92px; left: calc(50% - 176px); top: calc(50% - 46px);
-    overflow: hidden; display: flex; align-items: center; gap: 16px; padding: 0 22px;
-    background: var(--card); color: var(--fg); border: 1px solid var(--edge); border-radius: 18px;
+    position: absolute; width: 360px; height: 108px; left: calc(50% - 180px); top: calc(50% - 54px);
+    overflow: hidden; display: flex; align-items: center; gap: 14px; padding: 0 22px 0 14px;
+    background: var(--card); color: var(--fg); border: 1px solid var(--edge); border-radius: 2px;
     box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(1.4);
     opacity: 0; transform: translateY(6px) scale(.98);
     transition: opacity .35s ease, transform .45s cubic-bezier(.2, .8, .2, 1);
   }
   body.focus .card { box-shadow: 0 24px 60px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .1); }
   body.in .card { opacity: 1; transform: none; }
-  .mark { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--accent); display: grid; place-items: center; }
-  .mark::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .figure { flex: none; width: 76px; height: 80px; color: var(--accent); }
+  .figure .ghost { color: var(--muted); opacity: .4; stroke-dasharray: 3 2.5; }
+  .figure .plumb { stroke-dasharray: 1.5 3; stroke-width: 1.5; opacity: .5; }
+  .figure .cue { stroke-width: 1.5; opacity: .8; }
+  .figure .desk { color: var(--muted); opacity: .45; stroke-width: 1.5; }
   h1 { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
   p { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
@@ -46,10 +49,25 @@
 <body>
   <div id="shade"></div>
   <div class="card" id="card">
-    <div class="mark"></div>
+    <!-- Seated side profile: faded head = forward lean, solid = stacked over shoulders. -->
+    <svg class="figure" viewBox="0 0 72 76" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <g class="ghost">
+        <path d="M24 30 Q28 25 33 23"/>
+        <circle cx="38" cy="19" r="6.5"/>
+      </g>
+      <path class="cue" d="M37 8 Q32 4 28 6.5 M28 6.5 l3.2 -.6 M28 6.5 l1 3"/>
+      <line class="plumb" x1="24" y1="24" x2="24" y2="52"/>
+      <circle cx="24" cy="15" r="6.5"/>
+      <path d="M24 21.5 V28 Q21.5 40 23 52"/>
+      <path d="M24 32 L29 44 H44"/>
+      <path d="M23 52 H40 V70"/>
+      <path d="M40 44 H68" class="desk"/>
+      <rect x="55" y="24" width="12" height="14" rx=".5" class="desk"/>
+      <path d="M61 38 V44" class="desk"/>
+    </svg>
     <div>
       <h1 id="title">Head up.</h1>
-      <p id="text">Chin back, ears over shoulders.</p>
+      <p id="text">Bad posture causes a forward-leaning neck.</p>
     </div>
     <div class="bar" id="bar"></div>
   </div>
@@ -60,7 +78,20 @@ const OPTIONS = [10, 15, 20, 30, 45, 60];
 const SHOW_MS = 7000;
 const $ = id => document.getElementById(id);
 const card = $('card'), bar = $('bar'), shade = $('shade');
-const REMINDER = { title: 'Head up.', text: 'Chin back, ears over shoulders.', focus: true };
+const LINES = [
+  'Bad posture causes a forward-leaning neck.',
+  'Forward head posture strains your neck.',
+  'Slouching pulls your head forward. Sit tall.',
+  'Ears over shoulders. Your neck will thank you.',
+  'Tech neck creeps in slowly. Reset now.',
+  'Chin back. Let your head stack over your spine.',
+];
+let lastLine = -1;
+function reminder() {
+  let i; do i = Math.floor(Math.random() * LINES.length); while (i === lastLine && LINES.length > 1);
+  lastLine = i;
+  return { title: 'Head up.', text: LINES[i], focus: true };
+}
 
 let mins = 20, paused = false, atLogin = false, checking = false, nextAt = 0, hideTimer = null, urls = [];
 
@@ -130,7 +161,7 @@ async function capture() {
   return null;
 }
 
-async function popup({ title, text, focus } = REMINDER) {
+async function popup({ title, text, focus } = reminder()) {
   clearTimeout(hideTimer);
   $('title').textContent = title;
   $('text').textContent = text;
@@ -150,15 +181,15 @@ async function popup({ title, text, focus } = REMINDER) {
       img.src = url;
       shade.append(img);
     }
-    card.style.left = css(primary.x - virt.x + primary.w / 2) - 176 + 'px';
-    card.style.top = css(primary.y - virt.y + primary.h / 2) - 46 + 'px';
+    card.style.left = css(primary.x - virt.x + primary.w / 2) - 180 + 'px';
+    card.style.top = css(primary.y - virt.y + primary.h / 2) - 54 + 'px';
     document.body.classList.add('focus');
     await Neutralino.window.move(virt.x, virt.y);
     await Neutralino.window.setSize({ width: virt.w, height: virt.h });
   } else {
     card.style.left = card.style.top = '';
     document.body.classList.remove('focus');
-    await Neutralino.window.setSize({ width: 380, height: 120 });
+    await Neutralino.window.setSize({ width: 390, height: 138 });
     await Neutralino.window.center();
   }
 
@@ -186,7 +217,7 @@ document.addEventListener('keydown', dismiss);
 
 Neutralino.events.on('trayMenuItemClicked', ({ detail: { id } }) => {
   if (id === 'quit') return Neutralino.app.exit();
-  if (id === 'test') return popup(REMINDER);
+  if (id === 'test') return popup(reminder());
   if (id === 'login') return setLogin(!atLogin).then(tray);
   if (id === 'update') return manualUpdate();
   if (id === 'pause') paused = !paused;
@@ -199,7 +230,7 @@ Neutralino.events.on('windowClose', dismiss);
 // Check every 10s against the clock, so throttled timers or sleep never drift the schedule.
 setInterval(() => {
   if (paused) return;
-  if (Date.now() >= nextAt) { reset(); popup(REMINDER); }
+  if (Date.now() >= nextAt) { reset(); popup(reminder()); }
 }, 10000);
 
 // Start at login: a Run registry value (Windows), a LaunchAgent (macOS) or an autostart
