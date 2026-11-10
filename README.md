@@ -38,8 +38,9 @@ macOS: the app is unsigned. First launch: right-click → Open.
 
 Every push to `main` builds all three platforms and publishes a release
 (`.github/workflows/release.yml`). The app checks 30 s after launch and every 6 hours, installs the
-update and restarts. Updates are signed: the repo needs the `TAURI_SIGNING_PRIVATE_KEY` secret
-(and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty) matching the public key in `src-tauri/tauri.conf.json`.
+update and restarts. Updates are signed: the repo needs a `TAURI_SIGNING_PRIVATE_KEY` Actions secret
+matching the public key in `src-tauri/tauri.conf.json`. Without it, releases still build but can't
+auto-update.
 
 ## Build
 
