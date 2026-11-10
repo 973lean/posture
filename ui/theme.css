@@ -1,15 +1,15 @@
-/* Shared tokens. One colour per reminder; walk is white in dark mode and graphite in light mode. */
+/* Shared tokens. One colour per reminder (caffeine is violet); walk is white in dark mode, graphite in light. */
 :root {
   --card: rgba(252, 251, 249, .96); --panel: #fbfaf8; --fg: #1b1b1a; --muted: #85837e;
   --edge: rgba(0, 0, 0, .07); --hover: rgba(0, 0, 0, .04);
-  --posture: #2f6f5e; --water: #2563b8; --walk: #3b3b39;
+  --posture: #2f6f5e; --water: #2563b8; --walk: #3b3b39; --caffeine: #6a4fc0;
   --accent: var(--posture);
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --card: rgba(28, 28, 27, .94); --panel: #1c1c1b; --fg: #efeeeb; --muted: #8b8984;
     --edge: rgba(255, 255, 255, .08); --hover: rgba(255, 255, 255, .05);
-    --posture: #8fc7b2; --water: #7fb2f0; --walk: #f4f3f0;
+    --posture: #8fc7b2; --water: #7fb2f0; --walk: #f4f3f0; --caffeine: #b9a7f4;
   }
 }
 * { box-sizing: border-box; margin: 0; }

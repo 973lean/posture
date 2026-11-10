@@ -1,4 +1,4 @@
-// Focus: a tray app with three reminders (posture, water, walk).
+// Focus: a tray app with four reminders (posture, water, walk, caffeine).
 // Rust owns the schedule, settings, tray and windows; the UI lives in ../ui.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use chrono::{Local, NaiveTime, TimeZone};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -17,21 +18,51 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_positioner::{Position, WindowExt};
 
-const KINDS: [&str; 3] = ["posture", "water", "walk"];
+const KINDS: [&str; 4] = ["posture", "water", "walk", "caffeine"];
 const MAX_SAVED: usize = 5;
 const MAX_MINUTES: u32 = 720;
+const CAFFEINE: &str = "caffeine";
+/// After "Not now" (or no answer), ask again this much later.
+const CAFFEINE_SNOOZE_MS: u64 = 30 * 60_000;
+/// A daily dose not taken within this long of its time is skipped (late caffeine hurts sleep).
+const CAFFEINE_MISS_MS: u64 = 4 * 3600_000;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct Settings {
     every: BTreeMap<String, u32>, // minutes; 0 = off
     saved: BTreeMap<String, Vec<u32>>,
     paused: bool,
+    #[serde(default)]
+    caffeine: Caffeine,
+}
+
+/// Caffeine counts from when you actually take it, either on an interval or at 1–2 set times a day.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+struct Caffeine {
+    on: bool,
+    mode: String,          // "interval" | "daily"
+    times: Vec<u32>,       // daily: minutes after midnight, 1–2 doses
+    last_taken: Option<u64>, // unix ms
+    taken_date: String,    // local date of taken_today
+    taken_today: usize,    // daily doses handled today (taken or skipped past)
+}
+
+impl Default for Caffeine {
+    fn default() -> Self {
+        Caffeine { on: true, mode: "interval".into(), times: vec![9 * 60], last_taken: None, taken_date: String::new(), taken_today: 0 }
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        let mut s = Settings { every: BTreeMap::new(), saved: BTreeMap::new(), paused: false };
-        for (k, every, saved) in [("posture", 20, vec![20, 30, 45]), ("water", 45, vec![30, 45, 60]), ("walk", 60, vec![60, 90])] {
+        let mut s = Settings { every: BTreeMap::new(), saved: BTreeMap::new(), paused: false, caffeine: Caffeine::default() };
+        for (k, every, saved) in [
+            ("posture", 20, vec![20, 30, 45]),
+            ("water", 45, vec![30, 45, 60]),
+            ("walk", 60, vec![60, 90]),
+            ("caffeine", 240, vec![180, 240, 300]),
+        ] {
             s.every.insert(k.into(), every);
             s.saved.insert(k.into(), saved);
         }
@@ -54,8 +85,55 @@ impl Settings {
             self.saved.insert(k.into(), saved);
             self.every.insert(k.into(), every);
         }
+        let c = &mut self.caffeine;
+        if c.mode != "daily" {
+            c.mode = "interval".into();
+        }
+        c.times = clean_times(std::mem::take(&mut c.times));
+        if c.times.is_empty() {
+            c.times = vec![9 * 60];
+        }
         self
     }
+}
+
+fn clean_times(mut t: Vec<u32>) -> Vec<u32> {
+    t.retain(|m| *m < 24 * 60);
+    t.sort_unstable();
+    t.dedup();
+    t.truncate(2);
+    t
+}
+
+// ---------- caffeine timing ----------
+
+fn local_ms(date: chrono::NaiveDate, minutes: u32) -> u64 {
+    let t = NaiveTime::from_hms_opt(minutes / 60, minutes % 60, 0).unwrap_or_default();
+    Local.from_local_datetime(&date.and_time(t)).earliest().map(|d| d.timestamp_millis() as u64).unwrap_or(0)
+}
+
+fn today() -> chrono::NaiveDate {
+    Local::now().date_naive()
+}
+
+/// Daily mode: which dose is up now (skipping ones missed by more than CAFFEINE_MISS_MS) and when it's due.
+/// A late first dose pushes the second back by the same amount, keeping their spacing.
+fn daily_next(c: &Caffeine, now: u64) -> (Option<usize>, u64) {
+    let date = today();
+    let done = if c.taken_date == date.to_string() { c.taken_today } else { 0 };
+    let last_today = c.last_taken.filter(|t| *t >= local_ms(date, 0));
+    for i in done..c.times.len() {
+        let mut due = local_ms(date, c.times[i]);
+        if i > 0 {
+            if let Some(last) = last_today {
+                due = due.max(last + (c.times[i] - c.times[i - 1]) as u64 * 60_000);
+            }
+        }
+        if now <= due + CAFFEINE_MISS_MS {
+            return (Some(i), due);
+        }
+    }
+    (None, local_ms(date.succ_opt().unwrap_or(date), c.times[0]))
 }
 
 struct Inner {
@@ -67,12 +145,54 @@ struct Inner {
     panel_hidden_at: Option<Instant>,
     panel_shown_at: Option<Instant>,
     pause_item: Option<CheckMenuItem<Wry>>,
+    started_at: u64,
+    caffeine_snooze: Option<u64>,
 }
 
 impl Inner {
     fn reset(&mut self, kind: &str) {
+        if kind == CAFFEINE {
+            // Caffeine's schedule comes from when you take it; just drop any pending re-ask.
+            self.caffeine_snooze = None;
+            self.refresh_caffeine();
+            return;
+        }
         let mins = self.s.every.get(kind).copied().unwrap_or(0) as u64;
         self.next_at.insert(kind.into(), now_ms() + mins * 60_000);
+    }
+    fn caffeine_due(&self, now: u64) -> Option<u64> {
+        let c = &self.s.caffeine;
+        if !c.on {
+            return None;
+        }
+        let due = if c.mode == "daily" {
+            daily_next(c, now).1
+        } else {
+            let every = self.s.every.get(CAFFEINE).copied().unwrap_or(0) as u64;
+            if every == 0 {
+                return None;
+            }
+            c.last_taken.map(|t| t + every * 60_000).unwrap_or(self.started_at + 60_000)
+        };
+        Some(due.max(self.caffeine_snooze.unwrap_or(0)))
+    }
+    fn refresh_caffeine(&mut self) {
+        match self.caffeine_due(now_ms()) {
+            Some(d) => self.next_at.insert(CAFFEINE.into(), d),
+            None => self.next_at.remove(CAFFEINE),
+        };
+    }
+    fn took_caffeine(&mut self) {
+        let now = now_ms();
+        let c = &mut self.s.caffeine;
+        if c.mode == "daily" {
+            let (dose, _) = daily_next(c, now);
+            c.taken_today = dose.map(|i| i + 1).unwrap_or(c.times.len());
+            c.taken_date = today().to_string();
+        }
+        c.last_taken = Some(now);
+        self.caffeine_snooze = None;
+        self.refresh_caffeine();
     }
     fn reset_all(&mut self) {
         for k in KINDS {
@@ -80,7 +200,23 @@ impl Inner {
         }
     }
     fn view(&self) -> View {
-        View { every: self.s.every.clone(), saved: self.s.saved.clone(), paused: self.s.paused, next_at: self.next_at.clone() }
+        let mut every = self.s.every.clone();
+        if !self.s.caffeine.on {
+            every.insert(CAFFEINE.into(), 0);
+        }
+        let mut next_at = self.next_at.clone();
+        match self.caffeine_due(now_ms()) {
+            Some(d) => next_at.insert(CAFFEINE.into(), d),
+            None => next_at.remove(CAFFEINE),
+        };
+        let c = &self.s.caffeine;
+        View {
+            every,
+            saved: self.s.saved.clone(),
+            paused: self.s.paused,
+            next_at,
+            caffeine: CaffeineView { on: c.on, mode: c.mode.clone(), times: c.times.clone(), last_taken: c.last_taken },
+        }
     }
 }
 
@@ -92,6 +228,15 @@ struct View {
     saved: BTreeMap<String, Vec<u32>>,
     paused: bool,
     next_at: BTreeMap<String, u64>,
+    caffeine: CaffeineView,
+}
+
+#[derive(Serialize)]
+struct CaffeineView {
+    on: bool,
+    mode: String,
+    times: Vec<u32>,
+    last_taken: Option<u64>,
 }
 
 fn now_ms() -> u64 {
@@ -278,7 +423,11 @@ fn queue_now(app: &AppHandle, kind: &str) {
         let mut g = state.0.lock().unwrap();
         g.queue.retain(|k| k != kind);
         g.queue.push_front(kind.into());
-        g.reset(kind);
+        if kind == CAFFEINE {
+            g.caffeine_snooze = Some(now_ms() + CAFFEINE_SNOOZE_MS); // re-ask later unless taken
+        } else {
+            g.reset(kind);
+        }
     }
     let app = app.clone();
     thread::spawn(move || {
@@ -294,7 +443,17 @@ fn tick(app: &AppHandle) {
         let mut g = state.0.lock().unwrap();
         if !g.s.paused {
             let now = now_ms();
+            if let Some(due) = g.caffeine_due(now) {
+                if now >= due && !g.queue.iter().any(|q| q == CAFFEINE) {
+                    g.caffeine_snooze = Some(now + CAFFEINE_SNOOZE_MS); // re-ask later unless taken
+                    g.queue.push_back(CAFFEINE.into());
+                }
+            }
+            g.refresh_caffeine();
             for k in KINDS {
+                if k == CAFFEINE {
+                    continue;
+                }
                 let every = g.s.every.get(k).copied().unwrap_or(0);
                 if every == 0 || now < g.next_at.get(k).copied().unwrap_or(0) {
                     continue;
@@ -366,6 +525,15 @@ fn get_state(app: AppHandle) -> View {
 fn set_interval(app: AppHandle, kind: String, minutes: u32) -> Result<View, String> {
     valid_kind(&kind)?;
     Ok(update(&app, |g| {
+        if kind == CAFFEINE {
+            g.s.caffeine.on = minutes != 0;
+            if minutes != 0 && g.s.saved[&kind].contains(&minutes) {
+                g.s.every.insert(kind.clone(), minutes);
+                g.s.caffeine.mode = "interval".into();
+            }
+            g.reset(&kind);
+            return;
+        }
         if minutes == 0 || g.s.saved[&kind].contains(&minutes) {
             g.s.every.insert(kind.clone(), minutes);
             g.reset(&kind);
@@ -389,6 +557,10 @@ fn save_time(app: AppHandle, kind: String, minutes: u32) -> Result<View, String>
             saved.sort_unstable();
         }
         g.s.every.insert(kind.clone(), minutes);
+        if kind == CAFFEINE {
+            g.s.caffeine.on = true;
+            g.s.caffeine.mode = "interval".into();
+        }
         g.reset(&kind);
     }))
 }
@@ -400,6 +572,9 @@ fn remove_time(app: AppHandle, kind: String, minutes: u32) -> Result<View, Strin
         g.s.saved.get_mut(&kind).unwrap().retain(|m| *m != minutes);
         if g.s.every[&kind] == minutes {
             g.s.every.insert(kind.clone(), 0);
+            if kind == CAFFEINE && g.s.caffeine.mode == "interval" {
+                g.s.caffeine.on = false;
+            }
         }
         g.reset(&kind);
     }))
@@ -418,9 +593,16 @@ fn reset(app: AppHandle, kind: Option<String>) -> Result<View, String> {
     if let Some(k) = &kind {
         valid_kind(k)?;
     }
-    Ok(update(&app, |g| match &kind {
-        Some(k) => g.reset(k),
-        None => g.reset_all(),
+    Ok(update(&app, |g| {
+        match &kind {
+            Some(k) => g.reset(k),
+            None => g.reset_all(),
+        }
+        // Resetting caffeine in interval mode restarts its countdown from now.
+        if kind.as_deref().map_or(true, |k| k == CAFFEINE) && g.s.caffeine.mode == "interval" {
+            g.s.caffeine.last_taken = Some(now_ms());
+            g.refresh_caffeine();
+        }
     }))
 }
 
@@ -449,6 +631,42 @@ fn dismiss_popup(app: AppHandle) {
         thread::sleep(Duration::from_millis(1500)); // breathing room before the next one
         pump(&app);
     });
+}
+
+/// The caffeine popup's answer. Only "Took it" starts the next countdown.
+#[tauri::command]
+fn caffeine_answer(app: AppHandle, took: bool) {
+    update(&app, |g| {
+        if took {
+            g.took_caffeine();
+        } else {
+            g.caffeine_snooze = Some(now_ms() + CAFFEINE_SNOOZE_MS);
+            g.refresh_caffeine();
+        }
+    });
+    let _ = app.emit_to("panel", "state-changed", ());
+}
+
+#[tauri::command]
+fn set_caffeine(app: AppHandle, mode: Option<String>, times: Option<Vec<u32>>) -> View {
+    update(&app, |g| {
+        let c = &mut g.s.caffeine;
+        if let Some(m) = mode {
+            c.mode = if m == "daily" { "daily".into() } else { "interval".into() };
+        }
+        if let Some(t) = times {
+            let t = clean_times(t);
+            if !t.is_empty() {
+                c.times = t;
+            }
+        }
+        c.on = true;
+        if c.mode == "interval" && g.s.every[CAFFEINE] == 0 {
+            let first = g.s.saved[CAFFEINE].first().copied().unwrap_or(240);
+            g.s.every.insert(CAFFEINE.into(), first);
+        }
+        g.reset(CAFFEINE);
+    })
 }
 
 #[tauri::command]
@@ -487,7 +705,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_state, set_interval, save_time, remove_time, set_paused, reset, skip,
-            dismiss_popup, hide_panel, get_autostart, set_autostart, check_update, quit
+            dismiss_popup, caffeine_answer, set_caffeine, hide_panel, get_autostart, set_autostart, check_update, quit
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -504,6 +722,8 @@ fn main() {
                 panel_hidden_at: None,
                 panel_shown_at: None,
                 pause_item: None,
+                started_at: now_ms(),
+                caffeine_snooze: None,
             };
             inner.reset_all();
 
@@ -514,6 +734,7 @@ fn main() {
                 &MenuItem::with_id(app, "skip:posture", "Skip to next posture", true, None::<&str>)?,
                 &MenuItem::with_id(app, "skip:water", "Skip to next water", true, None::<&str>)?,
                 &MenuItem::with_id(app, "skip:walk", "Skip to next walk", true, None::<&str>)?,
+                &MenuItem::with_id(app, "skip:caffeine", "Skip to next caffeine", true, None::<&str>)?,
                 &PredefinedMenuItem::separator(app)?,
                 &MenuItem::with_id(app, "reset", "Reset all timers", true, None::<&str>)?,
                 &pause,
@@ -581,4 +802,70 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Focus");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn daily(times: Vec<u32>) -> Caffeine {
+        Caffeine { on: true, mode: "daily".into(), times, ..Caffeine::default() }
+    }
+    const H: u64 = 3600_000;
+
+    #[test]
+    fn first_dose_is_due_at_its_time() {
+        let d = today();
+        let c = daily(vec![9 * 60, 13 * 60]);
+        assert_eq!(daily_next(&c, local_ms(d, 8 * 60)), (Some(0), local_ms(d, 9 * 60)));
+    }
+
+    #[test]
+    fn late_first_dose_pushes_the_second_back() {
+        let d = today();
+        let mut c = daily(vec![9 * 60, 13 * 60]);
+        // Took dose 1 at 11:00 (2 h late) → dose 2 keeps the 4 h gap: 15:00, not 13:00.
+        c.last_taken = Some(local_ms(d, 11 * 60));
+        c.taken_today = 1;
+        c.taken_date = d.to_string();
+        assert_eq!(daily_next(&c, local_ms(d, 12 * 60)), (Some(1), local_ms(d, 15 * 60)));
+    }
+
+    #[test]
+    fn missed_first_dose_is_skipped_for_the_second() {
+        let d = today();
+        let c = daily(vec![8 * 60, 14 * 60]);
+        // Never took the 08:00 dose; at 13:00 it's over 4 h late, so the 14:00 dose is up.
+        assert_eq!(daily_next(&c, local_ms(d, 13 * 60)), (Some(1), local_ms(d, 14 * 60)));
+    }
+
+    #[test]
+    fn all_done_means_tomorrow() {
+        let d = today();
+        let mut c = daily(vec![9 * 60]);
+        c.taken_today = 1;
+        c.taken_date = d.to_string();
+        assert_eq!(daily_next(&c, local_ms(d, 10 * 60)).0, None);
+        assert_eq!(daily_next(&c, local_ms(d, 10 * 60)).1, local_ms(d.succ_opt().unwrap(), 9 * 60));
+    }
+
+    #[test]
+    fn yesterdays_count_resets() {
+        let d = today();
+        let mut c = daily(vec![9 * 60]);
+        c.taken_today = 1;
+        c.taken_date = "2000-01-01".into();
+        assert_eq!(daily_next(&c, local_ms(d, 8 * 60)).0, Some(0));
+    }
+
+    #[test]
+    fn settings_sanitize_caffeine() {
+        let mut s = Settings::default();
+        s.caffeine.mode = "weird".into();
+        s.caffeine.times = vec![2000, 600, 600, 300, 900];
+        let s = s.sanitize();
+        assert_eq!(s.caffeine.mode, "interval");
+        assert_eq!(s.caffeine.times, vec![300, 600]);
+        let _ = H;
+    }
 }

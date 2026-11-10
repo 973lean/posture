@@ -33,12 +33,24 @@ const TYPES = {
       'Look at something far away while you move.',
     ],
   },
+  caffeine: {
+    name: 'Caffeine', title: 'Caffeine time.', ask: true,
+    lines: [
+      'Caffeine’s half-life is about 5 hours.',
+      'Stop about 8 hours before bed to sleep well.',
+      'Try waiting an hour after waking for the first cup.',
+      'Have a glass of water alongside it.',
+      'Smaller doses, spaced out, beat one big hit.',
+      'Most adults stay under 400 mg a day.',
+    ],
+  },
 };
 
 const FIGURES = {
   "posture": "<svg viewBox=\"0 0 72 76\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"> <g class=\"ghost\"> <path d=\"M24 30 Q28 25 33 23\"/> <circle cx=\"38\" cy=\"19\" r=\"6.5\"/> </g> <path class=\"cue\" d=\"M37 8 Q32 4 28 6.5 M28 6.5 l3.2 -.6 M28 6.5 l1 3\"/> <line class=\"plumb\" x1=\"24\" y1=\"24\" x2=\"24\" y2=\"52\"/> <circle cx=\"24\" cy=\"15\" r=\"6.5\"/> <path d=\"M24 21.5 V28 Q21.5 40 23 52\"/> <path d=\"M24 32 L29 44 H44\"/> <path d=\"M23 52 H40 V70\"/> <path d=\"M40 44 H68\" class=\"desk\"/> <rect x=\"55\" y=\"24\" width=\"12\" height=\"14\" rx=\".5\" class=\"desk\"/> <path d=\"M61 38 V44\" class=\"desk\"/> </svg>",
   "water": "<svg viewBox=\"0 0 72 76\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"> <circle cx=\"24\" cy=\"14\" r=\"6.5\"/> <path d=\"M24 20.5 V46\"/> <path d=\"M24 46 L18 70 M24 46 L30 70\"/> <path d=\"M24 28 L19 45\"/> <path d=\"M24 28 L38 31 L37 22\"/> <path d=\"M33 11 L41 12 L39.5 22 L34 21.5 Z\"/> <path d=\"M31.5 13.5 L33.4 13.2\" stroke-width=\"1.5\"/> <g class=\"ghost\"> <path d=\"M49 12 q2.6 3.6 0 6 q-2.6 -2.4 0 -6 Z\"/> <path d=\"M55 23 q2 2.8 0 4.6 q-2 -1.8 0 -4.6 Z\"/> </g> <path class=\"desk\" d=\"M8 70 H48\"/> </svg>",
-  "walk": "<svg viewBox=\"0 0 72 76\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"> <circle cx=\"34\" cy=\"12\" r=\"6.5\"/> <path d=\"M33 18.5 L30 44\"/> <path d=\"M30 44 L23 57 L17 69\"/> <path d=\"M30 44 L39 56 L45 68\"/> <path d=\"M32 26 L25 35 L21 42\"/> <path d=\"M32 26 L40 33 L46 38\"/> <g class=\"ghost\"> <path d=\"M5 24 H13 M3 32 H11 M7 40 H13\"/> </g> <path class=\"desk\" d=\"M8 70 H62\"/> </svg>"
+  "walk": "<svg viewBox=\"0 0 72 76\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"> <circle cx=\"34\" cy=\"12\" r=\"6.5\"/> <path d=\"M33 18.5 L30 44\"/> <path d=\"M30 44 L23 57 L17 69\"/> <path d=\"M30 44 L39 56 L45 68\"/> <path d=\"M32 26 L25 35 L21 42\"/> <path d=\"M32 26 L40 33 L46 38\"/> <g class=\"ghost\"> <path d=\"M5 24 H13 M3 32 H11 M7 40 H13\"/> </g> <path class=\"desk\" d=\"M8 70 H62\"/> </svg>",
+  "caffeine": "<svg viewBox=\"0 0 72 76\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"> <circle cx=\"24\" cy=\"14\" r=\"6.5\"/> <path d=\"M24 20.5 V46\"/> <path d=\"M24 46 L18 70 M24 46 L30 70\"/> <path d=\"M24 28 L19 45\"/> <path d=\"M24 28 L31 38 L36 35\"/> <path d=\"M35 29 H45 V37 Q45 40 42 40 H38 Q35 40 35 37 Z\"/> <path d=\"M45 31.5 Q49 31.5 49 34 Q49 36.5 45 36.5\" stroke-width=\"1.5\"/> <g class=\"ghost\"> <path d=\"M38 25 q-2 -2.5 0 -5 q2 -2.5 0 -5\"/> <path d=\"M42.5 25 q-2 -2.5 0 -5 q2 -2.5 0 -5\"/> </g> <path class=\"desk\" d=\"M8 70 H48\"/> </svg>"
 };
 
 function figure(kind) {

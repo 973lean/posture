@@ -15,7 +15,7 @@
   footer { height: 46px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--muted); }
   .brand { font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
   .spacer { margin-right: auto; }
-  .cols { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); }
+  .cols { flex: 1; display: grid; grid-template-columns: repeat(4, 1fr); }
   .col { display: flex; flex-direction: column; padding: 14px 12px 12px; --sel: color-mix(in srgb, var(--accent) 12%, transparent); }
   .col + .col { border-left: 1px solid var(--edge); }
   .col-head { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
@@ -54,6 +54,22 @@
   .row .x:hover { background: var(--hover); color: var(--fg); }
   .row:hover .opt[aria-pressed="true"]::after { opacity: 0; }
   .off { margin-top: 4px; border-top: 1px solid var(--edge); }
+  /* Caffeine: interval vs daily, and dose times. */
+  .seg { display: flex; gap: 2px; padding: 2px; margin-bottom: 4px; border: 1px solid var(--edge); border-radius: 2px; }
+  .seg button { flex: 1; height: 22px; border-radius: 2px; font-size: 12px; color: var(--muted); transition: background .12s, color .12s; }
+  .seg button:hover { color: var(--fg); }
+  .seg button[aria-pressed="true"] { background: var(--sel); color: var(--accent); font-weight: 500; }
+  .hint { font-size: 11px; color: var(--muted); margin: 2px 4px 8px; }
+  .dose { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; font-size: 13px; }
+  .dose span { flex: 1; }
+  .dose input {
+    height: 26px; padding: 0 6px; border: 1px solid var(--edge); border-radius: 2px; background: transparent;
+    color: var(--fg); font: inherit; font-size: 13px; color-scheme: light dark; outline: none;
+  }
+  .dose input:focus { border-color: var(--accent); }
+  .dose .x { position: static; opacity: 1; width: 20px; height: 20px; border-radius: 2px; color: var(--muted); font-size: 14px; }
+  .dose .x:hover { background: var(--hover); color: var(--fg); }
+  .add { margin: 4px 10px; align-self: flex-start; }
   .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
   .switch { position: relative; width: 28px; height: 16px; border-radius: 2px; background: var(--edge); transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 1px; background: var(--muted); transition: transform .18s cubic-bezier(.2, .8, .2, 1), background .15s; }
@@ -96,7 +112,7 @@ function parseMinutes(v) {
 }
 
 function nextText(k) {
-  if (!view.every[k]) return 'Off';
+  if (!view.every[k] || (k === 'caffeine' && !view.caffeine.on)) return 'Off';
   if (view.paused) return 'Paused';
   const m = Math.max(0, Math.round((view.next_at[k] - Date.now()) / 60000));
   return m < 1 ? 'Next in under a minute' : `Next in ${short(m)}`;
@@ -119,6 +135,8 @@ function render() {
     const reset = col.querySelector('.reset');
     reset.disabled = !view.every[k] || view.paused;
     reset.onclick = () => call('reset', { kind: k });
+
+    if (k === 'caffeine') { caffeineOptions(col); return col; }
 
     const input = col.querySelector('.custom');
     input.placeholder = view.saved[k].length >= MAX_SAVED ? `Max ${MAX_SAVED} saved` : 'Custom';
@@ -153,6 +171,88 @@ function render() {
     return col;
   }));
   $('pause').setAttribute('aria-checked', view.paused);
+}
+
+const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const toMin = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+
+// Caffeine: Interval (counts from when you take it) or Daily (1–2 set times), then Off.
+function caffeineOptions(col) {
+  const c = view.caffeine, daily = c.mode === 'daily';
+  const opts = col.querySelector('.opts');
+  const seg = document.createElement('div');
+  seg.className = 'seg';
+  for (const [mode, label] of [['interval', 'Interval'], ['daily', 'Daily']]) {
+    const b = document.createElement('button');
+    b.textContent = label; b.setAttribute('aria-pressed', c.on && c.mode === mode);
+    b.onclick = () => call('set_caffeine', { mode, times: null });
+    seg.append(b);
+  }
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = daily ? 'Late doses shift the next one.' : 'Counts from when you take it.';
+  opts.prepend(seg, hint);
+
+  if (daily) {
+    opts.querySelector('.custom').remove();
+    const list = opts.querySelector('.saved');
+    c.times.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'dose';
+      row.innerHTML = `<span>${i ? '2nd' : '1st'}</span><input type="time" step="300" aria-label="${i ? 'Second' : 'First'} dose time">`;
+      const input = row.querySelector('input');
+      input.value = hhmm(t);
+      input.onchange = () => {
+        if (!input.value) return;
+        const times = [...c.times]; times[i] = toMin(input.value);
+        call('set_caffeine', { mode: null, times });
+      };
+      if (i) {
+        const x = document.createElement('button');
+        x.className = 'x'; x.textContent = '×'; x.title = 'Remove'; x.setAttribute('aria-label', 'Remove second dose');
+        x.onclick = () => call('set_caffeine', { mode: null, times: [c.times[0]] });
+        row.append(x);
+      } else if (c.times.length > 1) {
+        const gap = document.createElement('span'); gap.style.cssText = 'flex:none;width:20px'; row.append(gap);
+      }
+      list.append(row);
+    });
+    if (c.times.length < 2) {
+      const add = document.createElement('button');
+      add.className = 'link add'; add.textContent = '+ Add 2nd dose';
+      add.onclick = () => call('set_caffeine', { mode: null, times: [c.times[0], Math.min(c.times[0] + 240, 23 * 60 + 55)] });
+      list.append(add);
+    }
+  } else {
+    const input = opts.querySelector('.custom');
+    input.placeholder = view.saved.caffeine.length >= MAX_SAVED ? `Max ${MAX_SAVED} saved` : 'Custom';
+    input.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      const n = parseMinutes(input.value);
+      if (!n || (!view.saved.caffeine.includes(n) && view.saved.caffeine.length >= MAX_SAVED)) {
+        input.classList.remove('bad'); void input.offsetWidth; input.classList.add('bad');
+        return;
+      }
+      call('save_time', { kind: 'caffeine', minutes: n });
+    };
+    input.oninput = () => input.classList.remove('bad');
+    opts.querySelector('.saved').append(...view.saved.caffeine.map(m => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const b = document.createElement('button');
+      b.className = 'opt'; b.textContent = short(m); b.setAttribute('aria-pressed', c.on && view.every.caffeine === m);
+      b.onclick = () => call('set_interval', { kind: 'caffeine', minutes: m });
+      const x = document.createElement('button');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Remove'; x.setAttribute('aria-label', `Remove ${short(m)}`);
+      x.onclick = () => call('remove_time', { kind: 'caffeine', minutes: m });
+      row.append(b, x);
+      return row;
+    }));
+  }
+  const off = document.createElement('button');
+  off.className = 'opt off'; off.textContent = 'Off'; off.setAttribute('aria-pressed', !c.on);
+  off.onclick = () => call('set_interval', { kind: 'caffeine', minutes: 0 });
+  opts.append(off);
 }
 
 // Only refresh the countdowns on a timer, so a half-typed custom value isn't wiped.

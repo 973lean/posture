@@ -22,6 +22,14 @@
   .fig { flex: none; width: 76px; height: 80px; }
   h1 { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
   p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .ask { display: none; gap: 6px; margin-top: 9px; }
+  body.asking .ask { display: flex; }
+  .ask button { height: 24px; padding: 0 12px; border-radius: 2px; font-size: 12px; font-weight: 500; transition: background .12s, opacity .12s; }
+  .ask .yes { background: var(--accent); color: var(--card); }
+  .ask .yes:hover { opacity: .88; }
+  .ask .no { color: var(--muted); box-shadow: inset 0 0 0 1px var(--edge); }
+  .ask .no:hover { color: var(--fg); background: rgba(127, 127, 127, .08); }
+  body.asking p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
   .bar.run { transition: transform linear; transform: scaleX(0); }
   @media (prefers-reduced-motion: reduce) { .card, #tint { transition: none; } .card { transform: none; } }
@@ -31,16 +39,20 @@
   <div id="tint"></div>
   <div class="card" id="card">
     <div class="fig" id="fig"></div>
-    <div><h1 id="title"></h1><p id="text"></p></div>
+    <div style="min-width:0"><h1 id="title"></h1><p id="text"></p>
+      <div class="ask"><button class="yes" id="yes">Took it</button><button class="no" id="no">Not now</button></div></div>
     <div class="bar" id="bar"></div>
   </div>
 <script src="shared.js"></script>
 <script>
-const SHOW_MS = 7000, MIN_SHOW_MS = 1000;
+const MIN_SHOW_MS = 1000;
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const q = new URLSearchParams(location.search);
 const kind = TYPES[q.get('kind')] ? q.get('kind') : 'posture';
+const asking = !!TYPES[kind].ask;               // caffeine asks whether you took it
+const SHOW_MS = asking ? 20000 : 7000;          // no answer counts as "Not now"
+if (asking) document.body.classList.add('asking');
 const shownAt = Date.now();
 let done = false;
 
@@ -61,13 +73,16 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
 }));
 
 // Any click or key on any monitor dismisses it, but not during the first second.
-function finish(auto) {
+async function finish(auto, took = false) {
   if (done || (!auto && Date.now() - shownAt < MIN_SHOW_MS)) return;
   done = true;
+  if (asking) await invoke('caffeine_answer', { took });
   invoke('dismiss_popup');
 }
+document.getElementById('yes').addEventListener('mousedown', e => { e.stopPropagation(); finish(false, true); });
+document.getElementById('no').addEventListener('mousedown', e => { e.stopPropagation(); finish(false, false); });
 document.addEventListener('mousedown', () => finish(false));
-document.addEventListener('keydown', () => finish(false));
+document.addEventListener('keydown', e => finish(false, asking && e.key === 'Enter'));
 listen('popup-out', () => { done = true; document.body.classList.remove('in'); });
 </script>
 </body>
