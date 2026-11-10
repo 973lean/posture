@@ -1,0 +1,30 @@
+/* Shared tokens. One colour per reminder; walk is white in dark mode and graphite in light mode. */
+:root {
+  --card: rgba(252, 251, 249, .96); --panel: #fbfaf8; --fg: #1b1b1a; --muted: #85837e;
+  --edge: rgba(0, 0, 0, .07); --hover: rgba(0, 0, 0, .04);
+  --posture: #2f6f5e; --water: #2563b8; --walk: #3b3b39;
+  --accent: var(--posture);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --card: rgba(28, 28, 27, .94); --panel: #1c1c1b; --fg: #efeeeb; --muted: #8b8984;
+    --edge: rgba(255, 255, 255, .08); --hover: rgba(255, 255, 255, .05);
+    --posture: #8fc7b2; --water: #7fb2f0; --walk: #f4f3f0;
+  }
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; background: transparent; overflow: hidden; }
+body {
+  font: 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; user-select: none; cursor: default; color: var(--fg);
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* Stick figures: accent = do this, faded/dashed = context. */
+.fig { color: var(--accent); }
+.fig svg { width: 100%; height: 100%; display: block; }
+.fig .ghost { color: var(--muted); opacity: .4; stroke-dasharray: 3 2.5; }
+.fig .plumb { stroke-dasharray: 1.5 3; stroke-width: 1.5; opacity: .5; }
+.fig .cue { stroke-width: 1.5; opacity: .8; }
+.fig .desk { color: var(--muted); opacity: .45; stroke-width: 1.5; }

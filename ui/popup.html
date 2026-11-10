@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus reminder</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  /* One of these windows covers each monitor. The OS blurs what's behind it (Windows/macOS);
+     the tint below adds a light dim and stands in for the blur where the OS can't do it. */
+  #tint { position: fixed; inset: 0; background: rgba(18, 18, 18, .14); opacity: 0; transition: opacity .4s ease; }
+  body.in #tint { opacity: 1; }
+  .card {
+    position: absolute; width: 360px; height: 108px; left: calc(50% - 180px); top: calc(50% - 54px);
+    display: none; align-items: center; gap: 14px; padding: 0 22px 0 14px; overflow: hidden;
+    background: var(--card); border: 1px solid var(--edge); border-radius: 2px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .1);
+    opacity: 0; transform: translateY(6px) scale(.98);
+    transition: opacity .35s ease, transform .45s cubic-bezier(.2, .8, .2, 1);
+  }
+  body.primary .card { display: flex; }
+  body.in .card { opacity: 1; transform: none; }
+  .fig { flex: none; width: 76px; height: 80px; }
+  h1 { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+  p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
+  .bar.run { transition: transform linear; transform: scaleX(0); }
+  @media (prefers-reduced-motion: reduce) { .card, #tint { transition: none; } .card { transform: none; } }
+</style>
+</head>
+<body>
+  <div id="tint"></div>
+  <div class="card" id="card">
+    <div class="fig" id="fig"></div>
+    <div><h1 id="title"></h1><p id="text"></p></div>
+    <div class="bar" id="bar"></div>
+  </div>
+<script src="shared.js"></script>
+<script>
+const SHOW_MS = 7000, MIN_SHOW_MS = 1000;
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const q = new URLSearchParams(location.search);
+const kind = TYPES[q.get('kind')] ? q.get('kind') : 'posture';
+const shownAt = Date.now();
+let done = false;
+
+if (q.get('primary') === '1') {
+  const t = TYPES[kind];
+  document.body.classList.add('primary');
+  document.documentElement.style.setProperty('--accent', `var(--${kind})`);
+  document.getElementById('fig').append(figure(kind));
+  document.getElementById('title').textContent = t.title;
+  document.getElementById('text').textContent = t.lines[Math.floor(Math.random() * t.lines.length)];
+  setTimeout(() => finish(true), SHOW_MS);
+}
+
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  document.body.classList.add('in');
+  const bar = document.getElementById('bar');
+  bar.style.transitionDuration = SHOW_MS + 'ms'; bar.className = 'bar run';
+}));
+
+// Any click or key on any monitor dismisses it, but not during the first second.
+function finish(auto) {
+  if (done || (!auto && Date.now() - shownAt < MIN_SHOW_MS)) return;
+  done = true;
+  invoke('dismiss_popup');
+}
+document.addEventListener('mousedown', () => finish(false));
+document.addEventListener('keydown', () => finish(false));
+listen('popup-out', () => { done = true; document.body.classList.remove('in'); });
+</script>
+</body>
+</html>

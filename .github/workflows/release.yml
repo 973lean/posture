@@ -1,7 +1,7 @@
 name: Release
 
-# Every push to main builds the app and publishes it as the latest release.
-# Installed apps pick it up through update.json.
+# Every push to main builds Focus for Windows, macOS and Linux and publishes it as the
+# latest release. Installed apps update themselves from its latest.json.
 on:
   push:
     branches: [main]
@@ -12,8 +12,37 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  create-release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release_id: ${{ steps.r.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=3.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - id: r
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Prerelease until every platform is uploaded, so the updater never sees a half-built release.
+          gh release create "v${{ steps.v.outputs.version }}" --title "Focus ${{ steps.v.outputs.version }}" \
+            --notes "$(git log -1 --pretty=%s)" --prerelease --target "${{ github.sha }}"
+          echo "id=$(gh release view "v${{ steps.v.outputs.version }}" --json databaseId --jq .databaseId)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: ''
+          - os: macos-latest
+            args: '--target universal-apple-darwin'
+          - os: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,34 +50,48 @@ jobs:
         with:
           node-version: 22
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
       - name: Set version
-        run: |
-          VERSION="2.0.${{ github.run_number }}"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          jq --arg v "$VERSION" '.version = $v' neutralino.config.json > tmp.json && mv tmp.json neutralino.config.json
-
-      - name: Build
-        run: |
-          npx -y @neutralinojs/neu@11.8.0 update
-          npx -y @neutralinojs/neu@11.8.0 build --release
-
-      - name: Package
-        run: |
-          cd dist/Posture
-          mkdir ../out
-          zip -j ../out/Posture-windows.zip Posture-win_x64.exe resources.neu
-          zip -j ../out/Posture-mac.zip Posture-mac_universal resources.neu
-          zip -j ../out/Posture-linux.zip Posture-linux_x64 resources.neu
-          cp resources.neu ../out/
-          REPO_URL="https://github.com/${{ github.repository }}"
-          jq -n --arg v "$VERSION" --arg u "$REPO_URL/releases/download/v$VERSION/resources.neu" \
-            '{applicationId: "app.posturenudge", version: $v, resourcesURL: $u, data: {}}' > ../out/update.json
-
-      - name: Publish
+        shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
-          gh release create "v$VERSION" dist/out/* \
-            --title "Posture $VERSION" \
-            --notes "$(git log -1 --pretty=%s)" \
-            --latest
+          node -e '
+            const fs = require("fs"), f = "src-tauri/tauri.conf.json", c = JSON.parse(fs.readFileSync(f));
+            c.version = process.argv[1];
+            // Without the signing key, still ship installers (just no auto-update files).
+            if (process.env.HAS_KEY !== "true") c.bundle.createUpdaterArtifacts = false;
+            fs.writeFileSync(f, JSON.stringify(c, null, 2));
+          ' "${{ needs.create-release.outputs.version }}"
+
+      - run: npm install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: ${{ matrix.args }}
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "v${{ needs.create-release.outputs.version }}" --repo "${{ github.repository }}" --prerelease=false --latest

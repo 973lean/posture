@@ -1,53 +1,51 @@
-# Posture
+# Focus
 
-A quiet focus companion that lives in your tray (menu bar on macOS). No window, ~2 MB.
+A quiet focus companion that lives in your tray (menu bar on macOS). No main window.
 
-Three gentle reminders, each with its own colour and interval:
+Three gentle reminders, each with its own colour, stick figure and interval:
 
-- **Posture** — *Head up.* Bad posture causes a forward-leaning neck.
-- **Water** — *Drink some water.* Even mild dehydration can dull your focus.
-- **Walk** — *Time for a walk.* A few minutes on your feet resets your focus.
+- **Posture** (green) — *Head up.* Bad posture causes a forward-leaning neck.
+- **Water** (blue) — *Drink some water.* Even mild dehydration can dull your focus.
+- **Walk** (white) — *Time for a walk.* A few minutes on your feet resets your focus.
 
-When one is due, a small card with a stick-figure illustration appears in the middle of your main
-screen with every monitor softly blurred behind it (a snapshot taken the moment it appears; macOS
-asks for Screen Recording permission once). It stays at least 1 s, then click or press any key to
-dismiss; it fades on its own after 7 s. Reminders due together wait their turn.
+When one is due, a card appears in the middle of your main screen and every monitor is softly
+blurred behind it (live, by Windows/macOS). It stays at least 1 s; click or press any key to dismiss,
+or it fades after 7 s. Reminders due together wait their turn.
 
-Click the tray icon → **Open Focus…** for the settings panel: three columns (Posture, Water, Walk).
-Type a time in **Custom** (`25`, `90`, `1.5h`) and press Enter to save and select it — up to 5 saved
-times per reminder (hover one and click × to remove it), plus **Off**. The panel stays open while you
-change things; click elsewhere or press Esc to close it. Also there: **Pause all**, **Start at login**,
-**Check for updates**, **Quit**. Your choices are remembered.
+## Using it
+
+- **Left-click the tray icon** to open the panel; click anywhere else or press Esc to close it.
+  - Each column: countdown, **Skip to next** (show it now and restart its timer), **Reset**
+    (restart its timer), a **Custom** box (`25`, `90`, `1.5h` + Enter) with up to 5 saved times
+    (hover → × to remove), and **Off**.
+  - Header: **Reset all**, **Pause all**. Footer: **Start at login**, **Check for updates**, **Quit**.
+- **Right-click the tray icon** for a quick menu: skip to next posture / water / walk, reset all,
+  pause all, quit. (On Linux both clicks open this menu; use *Open Focus* for the panel.)
 
 ## Download
 
-Get the zip for your system from the [latest release](https://github.com/973lean/posture/releases/latest)
-and keep both files in it together, in a folder you can write to:
+Get it from the [latest release](https://github.com/973lean/posture/releases/latest):
 
 | System | File |
 |---|---|
-| Windows | `Posture-windows.zip` |
-| macOS | `Posture-mac.zip` |
-| Linux | `Posture-linux.zip` |
+| Windows | `Focus_x.y.z_x64-setup.exe` (installs for your user, no admin) |
+| macOS | `Focus_x.y.z_universal.dmg` |
+| Linux | `Focus_x.y.z_amd64.AppImage` |
 
-macOS: the app is unsigned. First launch: right-click → Open, or run
-`xattr -d com.apple.quarantine Posture-mac_universal && chmod +x Posture-mac_universal`.
+macOS: the app is unsigned. First launch: right-click → Open.
 
 ## Updates
 
-Every push to `main` builds and publishes a new release (`.github/workflows/release.yml`).
-The app checks for one 30 s after launch and every 6 hours, swaps it in, and restarts quietly.
-The current version is shown at the bottom of the tray menu.
-
-Updates cover the app itself (`resources/`, config). A new Neutralino engine version needs a fresh download.
-Auto-update needs the repository (or at least its releases) to be public.
+Every push to `main` builds all three platforms and publishes a release
+(`.github/workflows/release.yml`). The app checks 30 s after launch and every 6 hours, installs the
+update and restarts. Updates are signed: the repo needs the `TAURI_SIGNING_PRIVATE_KEY` secret
+(and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, empty) matching the public key in `src-tauri/tauri.conf.json`.
 
 ## Build
 
-Built with [Neutralinojs](https://neutralino.js.org) — the UI is `resources/index.html`.
+Built with [Tauri 2](https://tauri.app). UI in `ui/`, tray/scheduler/windows in `src-tauri/src/main.rs`.
 
 ```bash
-npx @neutralinojs/neu update
-npx @neutralinojs/neu build --release
+npm install
+npm run dev
 ```
-

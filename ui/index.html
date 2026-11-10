@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  #panel {
+    position: absolute; inset: 12px; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 2px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .18), 0 1px 3px rgba(0, 0, 0, .08);
+  }
+  header, footer { display: flex; align-items: center; gap: 16px; padding: 0 18px; }
+  header { height: 50px; border-bottom: 1px solid var(--edge); }
+  footer { height: 46px; border-top: 1px solid var(--edge); font-size: 12px; color: var(--muted); }
+  .brand { font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); margin-right: auto; }
+  .spacer { margin-right: auto; }
+  .cols { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); }
+  .col { display: flex; flex-direction: column; padding: 14px 12px 12px; --sel: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .col + .col { border-left: 1px solid var(--edge); }
+  .col-head { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+  .mini { width: 30px; height: 32px; flex: none; }
+  .mini svg { stroke-width: 3.2; }
+  h2 { font-size: 13px; font-weight: 600; }
+  .next { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; gap: 14px; padding: 8px 6px 10px; }
+  .link { font-size: 12px; color: var(--muted); padding: 2px 0; transition: color .12s; }
+  .link:hover { color: var(--accent); }
+  .link:disabled { opacity: .4; cursor: default; color: var(--muted); }
+  .opts { display: flex; flex-direction: column; gap: 1px; }
+  .custom {
+    width: 100%; height: 30px; margin-bottom: 6px; padding: 0 10px; border-radius: 2px;
+    border: 1px solid var(--edge); background: transparent; color: var(--fg); font: inherit; font-size: 13px; outline: none;
+    transition: border-color .12s;
+  }
+  .custom::placeholder { color: var(--muted); }
+  .custom:focus { border-color: var(--accent); }
+  .custom.bad { border-color: #c0533e; animation: nudge .3s; }
+  @keyframes nudge { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+  .saved { display: flex; flex-direction: column; gap: 1px; min-height: 145px; }
+  .row { position: relative; }
+  .opt {
+    display: flex; align-items: center; justify-content: space-between; width: 100%; height: 28px; padding: 0 10px;
+    border-radius: 2px; font-size: 13px; text-align: left; transition: background .12s;
+  }
+  .opt:hover { background: var(--hover); }
+  .opt[aria-pressed="true"] { background: var(--sel); color: var(--accent); font-weight: 500; }
+  .opt[aria-pressed="true"]::after { content: ""; width: 5px; height: 5px; border-radius: 1px; background: var(--accent); }
+  .row .x {
+    position: absolute; right: 4px; top: 4px; width: 20px; height: 20px; border-radius: 2px;
+    color: var(--muted); font-size: 14px; line-height: 20px; opacity: 0; transition: opacity .12s, background .12s;
+  }
+  .row:hover .x, .row .x:focus-visible { opacity: 1; }
+  .row .x:hover { background: var(--hover); color: var(--fg); }
+  .row:hover .opt[aria-pressed="true"]::after { opacity: 0; }
+  .off { margin-top: 4px; border-top: 1px solid var(--edge); }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .switch { position: relative; width: 28px; height: 16px; border-radius: 2px; background: var(--edge); transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 1px; background: var(--muted); transition: transform .18s cubic-bezier(.2, .8, .2, 1), background .15s; }
+  .switch[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .switch[aria-checked="true"]::after { transform: translateX(12px); background: var(--accent); }
+  footer .link:hover, header .link:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+  <div id="panel" role="dialog" aria-label="Focus settings">
+    <header>
+      <span class="brand">Focus</span>
+      <button class="link" id="reset-all">Reset all</button>
+      <span class="toggle">Pause all <button class="switch" id="pause" role="switch" aria-checked="false"></button></span>
+    </header>
+    <div class="cols" id="cols"></div>
+    <footer>
+      <span class="toggle">Start at login <button class="switch" id="login" role="switch" aria-checked="false"></button></span>
+      <span class="spacer"></span>
+      <button class="link" id="update">Check for updates</button>
+      <span id="ver"></span>
+      <button class="link" id="quit">Quit</button>
+    </footer>
+  </div>
+<script src="shared.js"></script>
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const $ = id => document.getElementById(id);
+const MAX_SAVED = 5;
+let view = null;
+
+const short = m => m === 0 ? 'Off' : m < 60 ? `${m} min` : m % 60 ? `${Math.floor(m / 60)} hr ${m % 60} min` : `${m / 60} hr`;
+// "25", "25m", "1.5h", "2 hr" → minutes (1 min – 12 hr), or null.
+function parseMinutes(v) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(m|min|mins|minutes?|h|hr|hrs|hours?)?\s*$/i.exec(v);
+  if (!m) return null;
+  const n = Math.round(parseFloat(m[1]) * (/^h/i.test(m[2] || '') ? 60 : 1));
+  return n >= 1 && n <= 720 ? n : null;
+}
+
+function nextText(k) {
+  if (!view.every[k]) return 'Off';
+  if (view.paused) return 'Paused';
+  const m = Math.max(0, Math.round((view.next_at[k] - Date.now()) / 60000));
+  return m < 1 ? 'Next in under a minute' : `Next in ${short(m)}`;
+}
+
+async function call(cmd, args) { view = await invoke(cmd, args); render(); }
+
+function render() {
+  $('cols').replaceChildren(...Object.entries(TYPES).map(([k, t]) => {
+    const col = document.createElement('section');
+    col.className = 'col';
+    col.style.setProperty('--accent', `var(--${k})`);
+    col.innerHTML = `
+      <div class="col-head"><div class="mini fig"></div><div><h2>${t.name}</h2><span class="next" data-k="${k}"></span></div></div>
+      <div class="actions"><button class="link skip">Skip to next</button><button class="link reset">Reset</button></div>
+      <div class="opts"><input class="custom" maxlength="12" spellcheck="false" aria-label="Custom ${t.name.toLowerCase()} interval"><div class="saved"></div></div>`;
+    col.querySelector('.mini').append(figure(k));
+    col.querySelector('.next').textContent = nextText(k);
+    col.querySelector('.skip').onclick = () => invoke('skip', { kind: k });
+    const reset = col.querySelector('.reset');
+    reset.disabled = !view.every[k] || view.paused;
+    reset.onclick = () => call('reset', { kind: k });
+
+    const input = col.querySelector('.custom');
+    input.placeholder = view.saved[k].length >= MAX_SAVED ? `Max ${MAX_SAVED} saved` : 'Custom';
+    input.onkeydown = e => {
+      if (e.key !== 'Enter') return;
+      const n = parseMinutes(input.value);
+      if (!n || (!view.saved[k].includes(n) && view.saved[k].length >= MAX_SAVED)) {
+        input.classList.remove('bad'); void input.offsetWidth; input.classList.add('bad');
+        return;
+      }
+      call('save_time', { kind: k, minutes: n });
+    };
+    input.oninput = () => input.classList.remove('bad');
+
+    const opt = m => {
+      const b = document.createElement('button');
+      b.className = 'opt'; b.textContent = short(m); b.setAttribute('aria-pressed', view.every[k] === m);
+      b.onclick = () => call('set_interval', { kind: k, minutes: m });
+      return b;
+    };
+    col.querySelector('.saved').append(...view.saved[k].map(m => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const x = document.createElement('button');
+      x.className = 'x'; x.textContent = '×'; x.title = 'Remove'; x.setAttribute('aria-label', `Remove ${short(m)}`);
+      x.onclick = () => call('remove_time', { kind: k, minutes: m });
+      row.append(opt(m), x);
+      return row;
+    }));
+    const off = opt(0); off.classList.add('off');
+    col.querySelector('.opts').append(off);
+    return col;
+  }));
+  $('pause').setAttribute('aria-checked', view.paused);
+}
+
+// Only refresh the countdowns on a timer, so a half-typed custom value isn't wiped.
+setInterval(() => { if (view) document.querySelectorAll('.next[data-k]').forEach(el => { el.textContent = nextText(el.dataset.k); }); }, 10000);
+
+$('pause').onclick = () => call('set_paused', { paused: !view.paused });
+$('reset-all').onclick = () => call('reset', { kind: null });
+$('login').onclick = async () => {
+  const on = $('login').getAttribute('aria-checked') !== 'true';
+  $('login').setAttribute('aria-checked', await invoke('set_autostart', { enabled: on }));
+};
+$('update').onclick = async () => {
+  const btn = $('update');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = 'Checking…';
+  const r = await invoke('check_update');
+  btn.textContent = r === 'current' ? 'Up to date' : r === 'updating' ? 'Updating… restarting' : 'Couldn’t check';
+  setTimeout(() => { btn.textContent = 'Check for updates'; btn.disabled = false; }, 4000);
+};
+$('quit').onclick = () => invoke('quit');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') invoke('hide_panel'); });
+
+async function refresh() {
+  view = await invoke('get_state');
+  render();
+  $('login').setAttribute('aria-checked', await invoke('get_autostart'));
+}
+listen('panel-shown', refresh);
+listen('state-changed', refresh);
+window.__TAURI__.app.getVersion().then(v => { $('ver').textContent = `v${v}`; });
+refresh();
+</script>
+</body>
+</html>

@@ -1,4 +1,3 @@
-bin/
-dist/
 node_modules/
-.tmp/
+src-tauri/target/
+src-tauri/gen/
