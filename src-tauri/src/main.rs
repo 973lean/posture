@@ -16,7 +16,6 @@ use tauri::{
     WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_positioner::{Position, WindowExt};
 
 const KINDS: [&str; 4] = ["posture", "water", "walk", "caffeine"];
 const MAX_SAVED: usize = 5;
@@ -147,6 +146,7 @@ struct Inner {
     pause_item: Option<CheckMenuItem<Wry>>,
     started_at: u64,
     caffeine_snooze: Option<u64>,
+    tray_rect: Option<(i32, i32, i32, i32)>, // last known tray icon bounds, physical px
 }
 
 impl Inner {
@@ -290,17 +290,43 @@ fn panel_visible(app: &AppHandle) -> bool {
     app.get_webview_window("panel").and_then(|w| w.is_visible().ok()).unwrap_or(false)
 }
 
-/// Next to the tray icon: below the menu bar on macOS, above the taskbar elsewhere.
-fn place_panel(w: &tauri::WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    let (near_tray, fallback) = (Position::TrayBottomCenter, Position::TopRight);
-    #[cfg(not(target_os = "macos"))]
-    let (near_tray, fallback) = (Position::TrayCenter, Position::BottomRight);
-    // The tray position is unknown until the icon has been clicked once (e.g. on a second launch).
-    let near = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| w.move_window(near_tray).is_ok())).unwrap_or(false);
-    if !near {
-        let _ = w.move_window(fallback);
+/// Where the panel goes: its right edge lines up with the tray icon so it opens out to the left,
+/// above the icon when the taskbar is at the bottom (below it for a top menu bar), and always
+/// fully inside the screen's usable area. All values are physical pixels.
+fn panel_origin(tray: Option<(i32, i32, i32, i32)>, area: (i32, i32, i32, i32), panel: (i32, i32)) -> (i32, i32) {
+    const GAP: i32 = 8;
+    let (ax, ay, aw, ah) = area;
+    let (pw, ph) = panel;
+    let (x, y) = match tray {
+        Some((tx, ty, tw, th)) => {
+            let x = tx + tw - pw;
+            let y = if ty + th / 2 > ay + ah / 2 { ty - ph - GAP } else { ty + th + GAP };
+            (x, y)
+        }
+        // Tray position unknown (e.g. opened from a second launch): bottom-right on Windows/Linux, top-right on macOS.
+        None => (ax + aw - pw - GAP, if cfg!(target_os = "macos") { ay + GAP } else { ay + ah - ph - GAP }),
+    };
+    let clamp = |v: i32, lo: i32, hi: i32| if hi < lo { lo } else { v.clamp(lo, hi) };
+    (clamp(x, ax + GAP, ax + aw - pw - GAP), clamp(y, ay + GAP, ay + ah - ph - GAP))
+}
+
+fn place_panel(app: &AppHandle, w: &tauri::WebviewWindow) {
+    let tray = app.state::<AppState>().0.lock().unwrap().tray_rect;
+    let monitor = match tray {
+        Some((x, y, _, _)) => app.monitor_from_point(x as f64, y as f64).ok().flatten(),
+        None => None,
     }
+    .or_else(|| w.current_monitor().ok().flatten())
+    .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(m) = monitor else { return };
+    let wa = m.work_area();
+    let area = (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32);
+    // Hidden windows can report a zero size on some platforms; fall back to the configured size.
+    let size = w.outer_size().ok().filter(|s| s.width > 0 && s.height > 0)
+        .map(|s| (s.width as i32, s.height as i32))
+        .unwrap_or(((800.0 * m.scale_factor()) as i32, (490.0 * m.scale_factor()) as i32));
+    let (x, y) = panel_origin(tray, area, size);
+    let _ = w.set_position(PhysicalPosition::new(x, y));
 }
 
 fn show_panel(app: &AppHandle) {
@@ -309,9 +335,9 @@ fn show_panel(app: &AppHandle) {
         return;
     }
     app.state::<AppState>().0.lock().unwrap().panel_shown_at = Some(Instant::now());
-    place_panel(&w);
+    place_panel(app, &w);
     let _ = w.show();
-    place_panel(&w); // again once shown: some platforms report a zero size while hidden
+    place_panel(app, &w); // again once shown: some platforms report a zero size while hidden
     let _ = w.set_focus();
     let _ = app.emit_to("panel", "panel-shown", ());
 }
@@ -344,7 +370,9 @@ fn hide_panel_now(app: &AppHandle) {
 #[cfg(target_os = "windows")]
 fn blur() -> Option<tauri::utils::config::WindowEffectsConfig> {
     use tauri::window::{Effect, EffectState, EffectsBuilder};
-    Some(EffectsBuilder::new().effect(Effect::Blur).state(EffectState::Active).build())
+    // Acrylic works on Windows 10 and 11. (The plain Blur effect only works up to Windows 11 22H1
+    // and renders black on newer builds.) A light neutral tint keeps it a soft blur.
+    Some(EffectsBuilder::new().effect(Effect::Acrylic).state(EffectState::Active).color(tauri::window::Color(24, 24, 24, 40)).build())
 }
 #[cfg(target_os = "macos")]
 fn blur() -> Option<tauri::utils::config::WindowEffectsConfig> {
@@ -700,7 +728,6 @@ fn main() {
     tauri::Builder::default()
         // Launching it again just opens the panel.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_panel(app)))
-        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -724,6 +751,7 @@ fn main() {
                 pause_item: None,
                 started_at: now_ms(),
                 caffeine_snooze: None,
+                tray_rect: None,
             };
             inner.reset_all();
 
@@ -758,7 +786,13 @@ fn main() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| handle_menu(app, e.id.as_ref()))
                 .on_tray_icon_event(|tray, e| {
-                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &e);
+                    if let TrayIconEvent::Click { rect, .. } | TrayIconEvent::Enter { rect, .. } | TrayIconEvent::Move { rect, .. } = &e {
+                        let scale = tray.app_handle().primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(1.0);
+                        let p = rect.position.to_physical::<i32>(scale);
+                        let sz = rect.size.to_physical::<u32>(scale);
+                        tray.app_handle().state::<AppState>().0.lock().unwrap().tray_rect =
+                            Some((p.x, p.y, sz.width as i32, sz.height as i32));
+                    }
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
                         toggle_panel(tray.app_handle());
                     }
@@ -856,6 +890,27 @@ mod tests {
         c.taken_today = 1;
         c.taken_date = "2000-01-01".into();
         assert_eq!(daily_next(&c, local_ms(d, 8 * 60)).0, Some(0));
+    }
+
+    #[test]
+    fn panel_opens_left_of_a_bottom_right_tray() {
+        // 1920x1040 work area, taskbar at the bottom, icon near the right edge, 800x470 panel.
+        let (x, y) = panel_origin(Some((1800, 1045, 24, 24)), (0, 0, 1920, 1040), (800, 470));
+        assert_eq!(x, 1800 + 24 - 800); // right edge on the icon, extends left
+        assert_eq!(y, 1040 - 470 - 8);  // above the taskbar, inside the screen
+    }
+
+    #[test]
+    fn panel_never_leaves_the_screen() {
+        // Icon at the far right of a small screen: clamped to the right edge.
+        let (x, _) = panel_origin(Some((1350, 740, 24, 24)), (0, 0, 1366, 728), (1000, 588));
+        assert_eq!(x, 1366 - 1000 - 8);
+        // Top menu bar (macOS): below the icon.
+        let (_, y) = panel_origin(Some((1700, 0, 22, 24)), (0, 25, 1920, 1055), (800, 470));
+        assert_eq!(y, 25 + 8); // clamped into the work area below the menu bar
+        // Second monitor to the left (negative coordinates).
+        let (x, _) = panel_origin(Some((-100, 1045, 24, 24)), (-1920, 0, 1920, 1040), (800, 470));
+        assert_eq!(x, -100 + 24 - 800);
     }
 
     #[test]
