@@ -1,0 +1,12 @@
+2026-11-20T01:05:12.094Z started 4.0.16 os=Windows path=C:/focus args=["C:\\focus\\Focus-win_x64.exe"] dpr=1 screen=1024x768
+2026-11-20T01:05:14.249Z bounds want=212,196,804,516 got=212,196,804,516 units=1.000,1.000 redo=false
+2026-11-20T01:05:14.280Z panel shown click=1004,758 area=0,0,1024,720 at=212,196 size=804x516
+2026-11-20T01:05:25.155Z bounds want=0,0,1024,768 got=0,0,1024,768 units=1.000,1.000 redo=false
+2026-11-20T01:05:25.185Z popup shown kind=posture blur=true inner=1024x768 dpr=1
+2026-11-20T01:05:35.201Z bounds want=0,0,1024,768 got=0,0,1024,768 units=1.000,1.000 redo=false
+2026-11-20T01:05:35.233Z popup shown kind=caffeine blur=true inner=1024x768 dpr=1
+2026-11-20T01:05:41.234Z caffeine answer took=true
+2026-11-20T01:05:43.877Z update downloading done 4.0.16.1 (81420 bytes), handing off
+2026-11-20T01:05:46.893Z started 4.0.16.1 os=Windows path=C:/focus args=["C:\\focus\\Focus-win_x64.exe"] dpr=1 screen=1024x768
+2026-11-20T01:05:49.029Z bounds want=212,196,804,516 got=212,196,804,516 units=1.000,1.000 redo=false
+2026-11-20T01:05:49.061Z panel shown click=1004,758 area=0,0,1024,720 at=212,196 size=804x516
