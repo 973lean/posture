@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus</title>
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="panel.css">
+<style>
+  /* Reminder: a blurred snapshot of every monitor with the card on the main screen. */
+  #shade { position: fixed; inset: 0; display: none; opacity: 0; background: rgba(18, 18, 18, .16); transition: opacity .45s ease; }
+  #shade img { position: absolute; filter: blur(14px) saturate(1.05); }
+  body.popup #shade { display: block; }
+  body.popup.open #shade { opacity: 1; }
+  .card {
+    position: absolute; width: 360px; height: 108px; left: calc(50% - 180px); top: calc(50% - 54px);
+    display: none; align-items: center; gap: 14px; padding: 0 22px 0 14px; overflow: hidden;
+    background: var(--card); border: 1px solid var(--edge); border-radius: 2px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, .28), 0 2px 6px rgba(0, 0, 0, .1);
+    opacity: 0; transform: translateY(6px) scale(.98);
+    transition: opacity .35s ease, transform .45s cubic-bezier(.2, .8, .2, 1);
+  }
+  body.popup .card { display: flex; }
+  body.popup.open .card { opacity: 1; transform: none; }
+  .card .fig { flex: none; width: 76px; height: 80px; }
+  .card h1 { font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+  .card p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .ask { display: none; gap: 6px; margin-top: 9px; }
+  body.asking .ask { display: flex; }
+  body.asking .card p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .ask button { height: 24px; padding: 0 12px; border-radius: 2px; font-size: 12px; font-weight: 500; transition: background .12s, opacity .12s; }
+  .ask .yes { background: var(--accent); color: var(--card); }
+  .ask .yes:hover { opacity: .88; }
+  .ask .no { color: var(--muted); box-shadow: inset 0 0 0 1px var(--edge); }
+  .ask .no:hover { color: var(--fg); background: rgba(127, 127, 127, .08); }
+  .bar { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--accent); opacity: .5; transform-origin: left; }
+  .bar.run { transition: transform linear; transform: scaleX(0); }
+  @media (prefers-reduced-motion: reduce) { .card, #shade { transition: none; } .card { transform: none; } }
+</style>
+</head>
+<body>
+  <div id="panel" role="dialog" aria-label="Focus settings">
+    <header>
+      <span class="brand">Focus</span>
+      <button class="link" id="reset-all">Reset all</button>
+      <span class="toggle">Pause all <button class="switch" id="pause" role="switch" aria-checked="false"></button></span>
+    </header>
+    <div class="cols" id="cols"></div>
+    <footer>
+      <span class="toggle">Start at login <button class="switch" id="login" role="switch" aria-checked="false"></button></span>
+      <span class="spacer"></span>
+      <button class="link" id="update">Check for updates</button>
+      <span id="ver"></span>
+      <button class="link" id="quit">Quit</button>
+    </footer>
+  </div>
+
+  <div id="shade"></div>
+  <div class="card" id="card">
+    <div class="fig" id="fig"></div>
+    <div style="min-width:0">
+      <h1 id="title"></h1><p id="text"></p>
+      <div class="ask"><button class="yes" id="yes">Took it</button><button class="no" id="no">Not now</button></div>
+    </div>
+    <div class="bar" id="bar"></div>
+  </div>
+
+<script src="js/neutralino.js"></script>
+<script src="core.js"></script>
+<script src="shared.js"></script>
+<script>
+const C = FocusCore;
+const $ = id => document.getElementById(id);
+const W = Neutralino.window;
+const REPO_MANIFEST = 'https://github.com/973lean/posture/releases/latest/download/update.json';
+const PANEL = { w: 804, h: 516 };   // CSS px, including the 12px shadow margin
+const SHOW_MS = 7000, ASK_MS = 20000, MIN_SHOW_MS = 1000;
+
+let s = C.defaults();                                      // saved settings
+const rt = { startedAt: Date.now(), nextAt: {}, caffeineSnooze: null };   // runtime timers
+let mode = 'idle';                                         // 'idle' | 'panel' | 'popup'
+let queue = [], atLogin = false, checking = false, testMode = false, manifestUrl = REPO_MANIFEST;
+let shownAt = 0, openedAt = 0, popupKind = null, hideTimer = null, urls = [];
+
+Neutralino.init();
+
+// ---------- helpers ----------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+async function sh(cmd) {
+  const r = await Neutralino.os.execCommand(cmd);
+  if (r.exitCode !== 0) throw new Error(r.stdErr || `exit ${r.exitCode}`);
+  return r.stdOut;
+}
+const winPath = p => (NL_OS === 'Windows' ? p.replace(/\//g, '\\') : p);
+async function log(msg) {
+  if (!testMode) return;
+  try { await Neutralino.filesystem.appendFile(`${NL_PATH}/focus-test.log`, `${new Date().toISOString()} ${msg}\n`); } catch {}
+}
+
+// ---------- settings ----------
+async function load() {
+  try { s = C.sanitize(JSON.parse(await Neutralino.storage.getData('settings'))); } catch { s = C.defaults(); }
+  try { const r = JSON.parse(await Neutralino.storage.getData('runtime')); rt.caffeineSnooze = r.caffeineSnooze || null; } catch {}
+  for (const k of C.KINDS) if (k !== 'caffeine') C.reset(s, rt, k, Date.now());
+}
+function save() {
+  Neutralino.storage.setData('settings', JSON.stringify(s)).catch(() => {});
+  Neutralino.storage.setData('runtime', JSON.stringify({ caffeineSnooze: rt.caffeineSnooze })).catch(() => {});
+}
+function changed() { save(); tray(); if (mode === 'panel') render(); }
+
+// ---------- window geometry ----------
+// Coordinates come from three places: the OS (mouse, screen snapshot), CSS, and Neutralino's
+// move/setSize. Depending on platform and display scaling these can differ by the scale factor,
+// so we measure how they relate after each resize instead of guessing, and correct on the spot.
+// "base" units: physical pixels on Windows, points (= CSS px) elsewhere.
+const basePerCss = () => (NL_OS === 'Windows' ? window.devicePixelRatio || 1 : 1);
+let sizeUnit = 1, posUnit = 1;   // native units per base unit, learned at runtime
+
+async function setBounds(x, y, w, h) {
+  const req = { x: Math.round(x * posUnit), y: Math.round(y * posUnit), w: Math.round(w * sizeUnit), h: Math.round(h * sizeUnit) };
+  await W.move(req.x, req.y);
+  await W.setSize({ width: req.w, height: req.h });
+  return req;
+}
+/** After showing: did the window come out the size/place we asked for? If not, learn the ratio and redo. */
+async function calibrate(x, y, w, h, req) {
+  await frame(); await sleep(30);
+  const b = basePerCss();
+  const gotW = window.innerWidth * b;
+  let redo = false;
+  if (gotW > 0 && Math.abs(gotW - w) / w > 0.03) { sizeUnit = req.w / gotW; redo = true; }
+  const gotX = window.screenX * b;
+  if (Math.abs(req.x) > 80 && Math.abs(gotX) > 40 && Math.abs(gotX - x) > Math.max(6, Math.abs(x) * 0.03)) { posUnit = req.x / gotX; redo = true; }
+  if (redo) await setBounds(x, y, w, h);
+  log(`bounds want=${[x, y, w, h].map(Math.round)} got=${[gotX, window.screenY * b, gotW, window.innerHeight * b].map(Math.round)} units=${sizeUnit.toFixed(3)},${posUnit.toFixed(3)} redo=${redo}`);
+}
+/** Usable screen area in base units (excludes the taskbar). */
+function workArea() {
+  const b = basePerCss(), sc = window.screen;
+  return [(sc.availLeft || 0) * b, (sc.availTop || 0) * b, sc.availWidth * b, sc.availHeight * b];
+}
+
+// ---------- tray ----------
+function tray() {
+  return Neutralino.os.setTray({
+    icon: '/resources/tray.png',
+    menuItems: [
+      { id: 'open', text: 'Open Focus…' },
+      { text: '-' },
+      ...C.KINDS.map(k => ({ id: `skip:${k}`, text: `Skip to next ${TYPES[k].name.toLowerCase()}` })),
+      { text: '-' },
+      { id: 'reset', text: 'Reset all timers' },
+      { id: 'pause', text: 'Pause all', isChecked: s.paused },
+      { text: '-' },
+      { id: 'quit', text: 'Quit Focus' },
+    ],
+  }).catch(() => {});
+}
+
+Neutralino.events.on('trayMenuItemClicked', async ({ detail: { id } }) => {
+  if (id === 'open') {
+    let click = null;
+    try { const m = await Neutralino.computer.getMousePosition(); click = { x: m.x / posUnit, y: m.y / posUnit }; } catch {}
+    return openPanel(click);
+  }
+  if (id === 'quit') return Neutralino.app.exit();
+  if (id === 'pause') { s.paused = !s.paused; resetAll(); return changed(); }
+  if (id === 'reset') { resetAll(true); return changed(); }
+  if (id?.startsWith('skip:')) skip(id.slice(5));
+});
+
+// ---------- schedule ----------
+function resetAll(restartCaffeine = false) {
+  const now = Date.now();
+  for (const k of C.KINDS) if (k !== 'caffeine') C.reset(s, rt, k, now);
+  rt.caffeineSnooze = null;
+  if (restartCaffeine && s.caffeine.mode === 'interval') s.caffeine.lastTaken = now;
+}
+function enqueue(kind, front = false) {
+  queue = queue.filter(k => k !== kind);
+  front ? queue.unshift(kind) : queue.push(kind);
+}
+function skip(kind) {
+  if (!TYPES[kind]) return;
+  if (kind === 'caffeine') rt.caffeineSnooze = Date.now() + C.CAFFEINE_SNOOZE;
+  else C.reset(s, rt, kind, Date.now());
+  enqueue(kind, true);
+  save();
+  if (mode === 'panel') closePanel(); else pump();
+}
+function pump() {
+  if (mode === 'idle' && queue.length) popup(queue.shift());
+}
+setInterval(() => {
+  for (const k of C.due(s, rt, Date.now())) enqueue(k);
+  if (queue.includes('caffeine')) save();
+  pump();
+  if (mode === 'panel') updateNext();
+}, 5000);
+
+// ---------- screen snapshot for the blur ----------
+const PS_SHOT = [
+  'Add-Type -AssemblyName System.Windows.Forms, System.Drawing',
+  'Add-Type -TypeDefinition \'using System; using System.Runtime.InteropServices; public class Dpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }\'',
+  '[Dpi]::SetProcessDPIAware() | Out-Null',
+  '$v = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+  '$p = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+  '$full = New-Object System.Drawing.Bitmap $v.Width, $v.Height',
+  '[System.Drawing.Graphics]::FromImage($full).CopyFromScreen($v.Left, $v.Top, 0, 0, $full.Size)',
+  '$small = New-Object System.Drawing.Bitmap ([int]($v.Width / 4)), ([int]($v.Height / 4))',
+  '[System.Drawing.Graphics]::FromImage($small).DrawImage($full, 0, 0, $small.Width, $small.Height)',
+  '$small.Save($args[0], [System.Drawing.Imaging.ImageFormat]::Jpeg)',
+  '($v.Left, $v.Top, $v.Width, $v.Height, $p.Left, $p.Top, $p.Width, $p.Height) -join " "',
+].join('\r\n');
+const JXA_SCREENS = 'ObjC.import("AppKit");var s=$.NSScreen.screens,o=[];for(var i=0;i<s.count;i++){var f=s.objectAtIndex(i).frame;o.push([f.origin.x,f.origin.y,f.size.width,f.size.height].join(" "))}o.join(";")';
+
+/** Snapshot every monitor. Returns rects in base units, or null where unsupported (Linux). */
+async function capture() {
+  if (NL_OS === 'Windows') {
+    const tmp = winPath(await Neutralino.os.getEnv('TEMP'));
+    const ps = `${tmp}\\focus-shot.ps1`, jpg = `${tmp}\\focus-shot.jpg`;
+    await Neutralino.filesystem.writeFile(ps, PS_SHOT);
+    const n = (await sh(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ps}" "${jpg}"`)).trim().split(/\s+/).map(Number);
+    if (n.length < 8 || n.some(isNaN)) throw new Error('bad capture output');
+    const virt = { x: n[0], y: n[1], w: n[2], h: n[3] };
+    return { virt, primary: { x: n[4], y: n[5], w: n[6], h: n[7] }, shots: [{ file: jpg, ...virt }] };
+  }
+  if (NL_OS === 'Darwin') {
+    // NSScreen frames are bottom-left based; flip to top-left using the main screen.
+    const raw = (await sh(`osascript -l JavaScript -e '${JXA_SCREENS}'`)).trim().split(';').map(l => l.split(' ').map(Number));
+    const mainH = raw[0][3];
+    const screens = raw.map(([x, y, w, h], i) => ({ x, y: mainH - (y + h), w, h, file: `/tmp/focus-shot-${i}.jpg` }));
+    await sh(`screencapture -x -t jpg ${screens.map(sc => `"${sc.file}"`).join(' ')}`);
+    const x = Math.min(...screens.map(sc => sc.x)), y = Math.min(...screens.map(sc => sc.y));
+    const virt = { x, y, w: Math.max(...screens.map(sc => sc.x + sc.w)) - x, h: Math.max(...screens.map(sc => sc.y + sc.h)) - y };
+    return { virt, primary: screens[0], shots: screens };
+  }
+  return null;
+}
+
+// ---------- reminder popup ----------
+async function popup(kind, message) {
+  mode = 'popup'; popupKind = kind; shownAt = Date.now();
+  clearTimeout(hideTimer);
+  const t = TYPES[kind] || TYPES.posture;
+  const asking = !message && !!t.ask;
+  document.documentElement.style.setProperty('--accent', `var(--${kind in TYPES ? kind : 'posture'})`);
+  $('fig').replaceChildren(figure(kind in TYPES ? kind : 'posture'));
+  $('title').textContent = message ? message.title : t.title;
+  $('text').textContent = message ? message.text : t.lines[Math.floor(Math.random() * t.lines.length)];
+  document.body.className = asking ? 'asking' : '';
+
+  let cap = null;
+  if (!message) { try { cap = await capture(); } catch (e) { log(`capture failed: ${e.message}`); } }
+  urls.forEach(URL.revokeObjectURL); urls = [];
+  $('shade').replaceChildren();
+
+  try {
+    if (cap) {
+      const { virt, primary, shots } = cap;
+      for (const sc of shots) {
+        const url = URL.createObjectURL(new Blob([await Neutralino.filesystem.readBinaryFile(sc.file)], { type: 'image/jpeg' }));
+        urls.push(url);
+        const img = new Image();
+        img.dataset.r = JSON.stringify([(sc.x - virt.x) / virt.w, (sc.y - virt.y) / virt.h, sc.w / virt.w, sc.h / virt.h]);
+        img.src = url;
+        $('shade').append(img);
+      }
+      const req = await setBounds(virt.x, virt.y, virt.w, virt.h);
+      document.body.classList.add('popup');
+      await W.show();
+      await calibrate(virt.x, virt.y, virt.w, virt.h, req);
+      // Lay out by fractions of the window, so it lines up whatever the units turned out to be.
+      for (const img of $('shade').children) {
+        const [fx, fy, fw, fh] = JSON.parse(img.dataset.r);
+        Object.assign(img.style, { left: `${fx * 100}%`, top: `${fy * 100}%`, width: `${fw * 100}%`, height: `${fh * 100}%` });
+      }
+      const card = $('card');
+      card.style.left = `${((primary.x - virt.x + primary.w / 2) / virt.w) * window.innerWidth - 180}px`;
+      card.style.top = `${((primary.y - virt.y + primary.h / 2) / virt.h) * window.innerHeight - 54}px`;
+    } else {
+      // No snapshot (Linux, or it failed): just the card, centred.
+      $('card').style.left = $('card').style.top = '';
+      const b = basePerCss(), w = 390 * b, h = 138 * b, [ax, ay, aw, ah] = workArea();
+      const req = await setBounds(ax + (aw - w) / 2, ay + (ah - h) / 2, w, h);
+      document.body.classList.add('popup');
+      await W.show();
+      await calibrate(ax + (aw - w) / 2, ay + (ah - h) / 2, w, h, req);
+    }
+    await W.setAlwaysOnTop(true);
+    await W.focus().catch(() => {});
+  } catch (e) { log(`popup error: ${e.message}`); }
+
+  const ms = asking ? ASK_MS : SHOW_MS;
+  const bar = $('bar');
+  bar.className = 'bar'; bar.style.transitionDuration = ''; void bar.offsetWidth;
+  await frame();
+  document.body.classList.add('open');
+  bar.style.transitionDuration = ms + 'ms'; bar.className = 'bar run';
+  log(`popup shown kind=${kind} blur=${!!cap} inner=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`);
+  hideTimer = setTimeout(() => finishPopup(true, false), ms);
+}
+
+async function finishPopup(auto, took) {
+  if (mode !== 'popup' || (!auto && Date.now() - shownAt < MIN_SHOW_MS)) return;
+  clearTimeout(hideTimer);
+  if (popupKind === 'caffeine' && document.body.classList.contains('asking')) {
+    if (took) C.tookCaffeine(s, rt, Date.now()); else rt.caffeineSnooze = Date.now() + C.CAFFEINE_SNOOZE;
+    save();
+    log(`caffeine answer took=${took}`);
+  }
+  mode = 'closing';
+  document.body.classList.remove('open');
+  await sleep(450);
+  await W.hide();
+  document.body.className = '';
+  mode = 'idle';
+  setTimeout(pump, 1500);
+}
+$('yes').addEventListener('mousedown', e => { e.stopPropagation(); finishPopup(false, true); });
+$('no').addEventListener('mousedown', e => { e.stopPropagation(); finishPopup(false, false); });
+document.addEventListener('mousedown', () => { if (mode === 'popup') finishPopup(false, false); });
+
+// ---------- panel ----------
+async function openPanel(click) {
+  if (mode === 'popup') return;
+  if (mode === 'panel') return W.focus().catch(() => {});
+  mode = 'panel'; openedAt = Date.now();
+  render();
+  document.body.className = 'panel';
+  const b = basePerCss(), w = PANEL.w * b, h = PANEL.h * b;
+  const area = workArea();
+  const o = C.panelOrigin(click, area, [w, h], 8 * b);
+  const req = await setBounds(o.x, o.y, w, h);
+  await W.show();
+  await calibrate(o.x, o.y, w, h, req);
+  await W.focus().catch(() => {});
+  await frame();
+  document.body.classList.add('open');
+  log(`panel shown click=${click ? [click.x, click.y].map(Math.round) : 'none'} area=${area.map(Math.round)} at=${o.x},${o.y} size=${Math.round(w)}x${Math.round(h)}`);
+}
+async function closePanel() {
+  if (mode !== 'panel') return;
+  mode = 'closing';
+  document.body.classList.remove('open');
+  await sleep(180);
+  await W.hide();
+  document.body.className = '';
+  mode = 'idle';
+  setTimeout(pump, 800);
+}
+// Click anywhere else (the window loses focus) or Esc closes the panel.
+Neutralino.events.on('windowBlur', () => { if (mode === 'panel' && Date.now() - openedAt > 400) closePanel(); });
+Neutralino.events.on('windowClose', () => (mode === 'panel' ? closePanel() : finishPopup(false, false)));
+document.addEventListener('keydown', e => {
+  if (mode === 'panel') { if (e.key === 'Escape') closePanel(); }
+  else if (mode === 'popup') finishPopup(false, popupKind === 'caffeine' && e.key === 'Enter');
+});
+
+function nextText(k, next) {
+  if (next[k] == null) return 'Off';
+  if (s.paused) return 'Paused';
+  const m = Math.max(0, Math.round((next[k] - Date.now()) / C.MIN));
+  return m < 1 ? 'Next in under a minute' : `Next in ${C.short(m)}`;
+}
+function updateNext() {
+  const next = C.nextTimes(s, rt, Date.now());
+  document.querySelectorAll('.next[data-k]').forEach(el => { el.textContent = nextText(el.dataset.k, next); });
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function render() {
+  const next = C.nextTimes(s, rt, Date.now());
+  $('cols').replaceChildren(...C.KINDS.map(k => {
+    const t = TYPES[k];
+    const col = el('section', 'col');
+    col.style.setProperty('--accent', `var(--${k})`);
+    col.innerHTML = `
+      <div class="col-head"><div class="mini fig"></div><div><h2></h2><span class="next" data-k="${k}"></span></div></div>
+      <div class="actions"><button class="link skip">Skip to next</button><button class="link reset">Reset</button></div>
+      <div class="opts"></div>`;
+    col.querySelector('h2').textContent = t.name;
+    col.querySelector('.mini').append(figure(k));
+    col.querySelector('.next').textContent = nextText(k, next);
+    col.querySelector('.skip').onclick = () => skip(k);
+    const reset = col.querySelector('.reset');
+    reset.disabled = next[k] == null || s.paused;
+    reset.onclick = () => { C.reset(s, rt, k, Date.now()); changed(); };
+    const opts = col.querySelector('.opts');
+    if (k === 'caffeine') caffeineOptions(opts);
+    else intervalOptions(opts, k, () => s.every[k]);
+    return col;
+  }));
+  $('pause').setAttribute('aria-checked', s.paused);
+  $('login').setAttribute('aria-checked', atLogin);
+}
+
+/** Custom box, up to 5 saved times, then Off. */
+function intervalOptions(opts, k, selected) {
+  const input = el('input', 'custom');
+  input.maxLength = 12; input.spellcheck = false; input.setAttribute('aria-label', `Custom ${TYPES[k].name.toLowerCase()} interval`);
+  input.placeholder = s.saved[k].length >= C.MAX_SAVED ? `Max ${C.MAX_SAVED} saved` : 'Custom';
+  input.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    const n = C.parseMinutes(input.value);
+    if (!n || (!s.saved[k].includes(n) && s.saved[k].length >= C.MAX_SAVED)) {
+      input.classList.remove('bad'); void input.offsetWidth; input.classList.add('bad');
+      return;
+    }
+    if (!s.saved[k].includes(n)) s.saved[k] = [...s.saved[k], n].sort((a, b) => a - b);
+    choose(k, n);
+  };
+  input.oninput = () => input.classList.remove('bad');
+  const list = el('div', 'saved');
+  for (const m of s.saved[k]) {
+    const row = el('div', 'row');
+    const b = el('button', 'opt', C.short(m));
+    b.setAttribute('aria-pressed', selected() === m);
+    b.onclick = () => choose(k, m);
+    const x = el('button', 'x', '×');
+    x.title = 'Remove'; x.setAttribute('aria-label', `Remove ${C.short(m)}`);
+    x.onclick = () => {
+      s.saved[k] = s.saved[k].filter(v => v !== m);
+      if (s.every[k] === m) choose(k, 0); else changed();
+    };
+    row.append(b, x);
+    list.append(row);
+  }
+  const off = el('button', 'opt off', 'Off');
+  off.setAttribute('aria-pressed', selected() === 0);
+  off.onclick = () => choose(k, 0);
+  opts.append(input, list, off);
+}
+
+function choose(k, m) {
+  if (k === 'caffeine') {
+    s.caffeine.on = m !== 0;
+    if (m) { s.every.caffeine = m; s.caffeine.mode = 'interval'; }
+    rt.caffeineSnooze = null;
+  } else {
+    s.every[k] = m;
+    C.reset(s, rt, k, Date.now());
+  }
+  changed();
+}
+
+const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const toMin = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+
+/** Caffeine: Interval (counts from when you take it) or Daily (1–2 set times), then Off. */
+function caffeineOptions(opts) {
+  const c = s.caffeine, daily = c.mode === 'daily';
+  const seg = el('div', 'seg');
+  for (const [m, label] of [['interval', 'Interval'], ['daily', 'Daily']]) {
+    const b = el('button', null, label);
+    b.setAttribute('aria-pressed', c.on && c.mode === m);
+    b.onclick = () => {
+      c.mode = m; c.on = true; rt.caffeineSnooze = null;
+      if (m === 'interval' && !s.every.caffeine) s.every.caffeine = s.saved.caffeine[0] || 240;
+      changed();
+    };
+    seg.append(b);
+  }
+  opts.append(seg, el('p', 'hint', daily ? 'Late doses shift the next one.' : 'Counts from when you take it.'));
+  if (!daily) {
+    intervalOptions(opts, 'caffeine', () => (c.on && c.mode === 'interval' ? s.every.caffeine : c.on ? -1 : 0));
+    return;
+  }
+  const list = el('div', 'saved');
+  c.times.forEach((t, i) => {
+    const row = el('div', 'dose');
+    row.append(el('span', null, i ? '2nd' : '1st'));
+    const input = el('input');
+    input.type = 'time'; input.step = 300; input.value = hhmm(t);
+    input.setAttribute('aria-label', `${i ? 'Second' : 'First'} dose time`);
+    input.onchange = () => {
+      if (!input.value) return;
+      const times = [...c.times]; times[i] = toMin(input.value);
+      c.times = C.cleanTimes(times); c.on = true; rt.caffeineSnooze = null; changed();
+    };
+    row.append(input);
+    if (i) {
+      const x = el('button', 'x', '×');
+      x.title = 'Remove'; x.setAttribute('aria-label', 'Remove second dose');
+      x.onclick = () => { c.times = [c.times[0]]; changed(); };
+      row.append(x);
+    } else if (c.times.length > 1) {
+      const gap = el('span'); gap.style.cssText = 'flex:none;width:20px'; row.append(gap);
+    }
+    list.append(row);
+  });
+  if (c.times.length < 2) {
+    const add = el('button', 'link add', '+ Add 2nd dose');
+    add.onclick = () => { c.times = C.cleanTimes([c.times[0], Math.min(c.times[0] + 240, 23 * 60 + 55)]); c.on = true; changed(); };
+    list.append(add);
+  }
+  const off = el('button', 'opt off', 'Off');
+  off.setAttribute('aria-pressed', !c.on);
+  off.onclick = () => choose('caffeine', 0);
+  opts.append(list, off);
+}
+
+$('pause').onclick = () => { s.paused = !s.paused; resetAll(); changed(); };
+$('reset-all').onclick = () => { resetAll(true); changed(); };
+$('login').onclick = async () => { await setLogin(!atLogin); render(); };
+$('quit').onclick = () => Neutralino.app.exit();
+$('update').onclick = async () => {
+  const btn = $('update');
+  if (checking) return;
+  btn.textContent = 'Checking…';
+  const r = await checkForUpdate(v => { btn.textContent = `Updating to ${v}…`; });
+  btn.textContent = r === 'current' ? 'Up to date' : r === 'updating' ? 'Restarting…' : 'Couldn’t check';
+  setTimeout(() => { btn.textContent = 'Check for updates'; }, 4000);
+};
+
+// ---------- start at login ----------
+// A Run registry value (Windows), a LaunchAgent (macOS) or an autostart .desktop file (Linux).
+// --path pins the app folder so resources.neu is found at boot.
+const LOGIN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const xml = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function exePath() {
+  const a = NL_ARGS[0];
+  return winPath(/^([a-zA-Z]:)?[\\/]/.test(a) ? a : `${NL_PATH}/${a.split(/[\\/]/).pop()}`);
+}
+async function loginFile() {
+  const home = await Neutralino.os.getEnv('HOME');
+  return NL_OS === 'Darwin'
+    ? { dir: `${home}/Library/LaunchAgents`, file: `${home}/Library/LaunchAgents/app.focus.plist` }
+    : { dir: `${home}/.config/autostart`, file: `${home}/.config/autostart/focus.desktop` };
+}
+async function readLogin() {
+  try {
+    if (NL_OS === 'Windows') return (await Neutralino.os.execCommand(`reg query "${LOGIN_KEY}" /v Focus`)).exitCode === 0;
+    await Neutralino.filesystem.getStats((await loginFile()).file);
+    return true;
+  } catch { return false; }
+}
+async function setLogin(on) {
+  const exe = exePath(), dir = winPath(NL_PATH);
+  try {
+    if (NL_OS === 'Windows') {
+      await sh(on
+        ? `reg add "${LOGIN_KEY}" /v Focus /t REG_SZ /d "\\"${exe}\\" --path=\\"${dir}\\"" /f`
+        : `reg delete "${LOGIN_KEY}" /v Focus /f`);
+    } else {
+      const f = await loginFile();
+      if (!on) await Neutralino.filesystem.remove(f.file);
+      else {
+        await Neutralino.filesystem.createDirectory(f.dir).catch(() => {});
+        await Neutralino.filesystem.writeFile(f.file, NL_OS === 'Darwin'
+          ? `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>app.focus</string>
+  <key>ProgramArguments</key><array><string>${xml(exe)}</string><string>--path=${xml(dir)}</string></array>
+  <key>WorkingDirectory</key><string>${xml(dir)}</string>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+`
+          : `[Desktop Entry]\nType=Application\nName=Focus\nExec="${exe}" "--path=${dir}"\nPath=${dir}\nX-GNOME-Autostart-enabled=true\n`);
+      }
+    }
+    atLogin = on;
+  } catch (e) { log(`login error: ${e.message}`); }
+}
+
+// ---------- updates ----------
+// Every push to main publishes a release with update.json + resources.neu (see .github/workflows).
+// We download the new resources.neu next to the app, then hand off to a tiny script that waits for
+// this process to exit, swaps the file in and relaunches. Nothing is replaced while it's in use.
+const relaunchArgs = () => NL_ARGS.slice(1).filter(a => !/^--(neu-dev|window-|enable-)/.test(a));
+async function checkForUpdate(onFound) {
+  if (checking) return 'failed';
+  checking = true;
+  try {
+    const raw = await sh(`curl -fsSL --max-time 20 "${manifestUrl}"`);
+    const m = JSON.parse(raw);
+    if (m.applicationId !== NL_APPID || !C.newer(m.version, NL_APPVERSION)) { log(`update current (${m.version})`); return 'current'; }
+    if (onFound) onFound(m.version);
+    const dir = winPath(NL_PATH), sep = NL_OS === 'Windows' ? '\\' : '/';
+    const cur = `${dir}${sep}resources.neu`, fresh = `${cur}.new`;
+    await sh(`curl -fsSL --max-time 120 -o "${fresh}" "${m.resourcesURL}"`);
+    const st = await Neutralino.filesystem.getStats(fresh);
+    if (!st.size) throw new Error('empty download');
+    while (mode === 'popup' || mode === 'closing') await sleep(1000);
+    log(`update downloading done ${m.version} (${st.size} bytes), handing off`);
+    const exe = exePath(), args = relaunchArgs();
+    if (NL_OS === 'Windows') {
+      const ps1 = `${dir}\\focus-update.ps1`;
+      const q = v => `'${v.replace(/'/g, "''")}'`;
+      await Neutralino.filesystem.writeFile(ps1, [
+        'Start-Sleep -Seconds 2',
+        `for ($i = 0; $i -lt 30; $i++) { try { Move-Item -Force -LiteralPath ${q(fresh)} -Destination ${q(cur)} -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500 } }`,
+        `Start-Process -FilePath ${q(exe)} -WorkingDirectory ${q(dir)}${args.length ? ` -ArgumentList ${args.map(q).join(',')}` : ''}`,
+        'Remove-Item -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue',
+      ].join('\r\n'));
+      await Neutralino.os.execCommand(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${ps1}"`, { background: true });
+    } else {
+      const script = `${dir}/focus-update.sh`;
+      const q = v => `'${v.replace(/'/g, `'\\''`)}'`;
+      await Neutralino.filesystem.writeFile(script, [
+        'sleep 2',
+        `mv -f ${q(fresh)} ${q(cur)}`,
+        `cd ${q(dir)} && nohup ${q(exe)} ${args.map(q).join(' ')} >/dev/null 2>&1 &`,
+        'rm -f "$0"',
+      ].join('\n'));
+      await Neutralino.os.execCommand(`nohup sh ${q(script)} >/dev/null 2>&1 &`, { background: true });
+    }
+    await sleep(300);
+    Neutralino.app.exit();
+    return 'updating';
+  } catch (e) {
+    log(`update failed: ${e.message}`);
+    return 'failed';
+  } finally { checking = false; }
+}
+
+// ---------- start ----------
+(async () => {
+  try { testMode = (await Neutralino.os.getEnv('FOCUS_TEST')) === '1'; } catch {}
+  try { manifestUrl = (await Neutralino.os.getEnv('FOCUS_MANIFEST')) || REPO_MANIFEST; } catch {}
+  $('ver').textContent = `v${NL_APPVERSION}`;
+  await load();
+  atLogin = await readLogin();
+  if (atLogin) await setLogin(true);   // refresh, in case the app was moved
+  tray();
+  log(`started ${NL_APPVERSION} os=${NL_OS} path=${NL_PATH} args=${JSON.stringify(NL_ARGS)} dpr=${window.devicePixelRatio} screen=${screen.width}x${screen.height}`);
+  if (testMode) return runTest();
+  setTimeout(() => checkForUpdate(), 30000);
+  setInterval(() => checkForUpdate(), 6 * 3600000);
+})();
+
+// Scripted run used by the Windows check on GitHub (FOCUS_TEST=1): panel at a bottom-right
+// tray click, then the posture and caffeine reminders, then an update from FOCUS_MANIFEST.
+async function runTest() {
+  const b = basePerCss();
+  await sleep(2000);
+  await openPanel({ x: (screen.width - 20) * b, y: (screen.height - 10) * b });
+  await sleep(5000);
+  await closePanel();
+  await sleep(1500);
+  await popup('posture');
+  await sleep(SHOW_MS + 2500);
+  await popup('caffeine');
+  await sleep(6000);
+  await finishPopup(false, true);
+  await sleep(2000);
+  log(`update result ${await checkForUpdate()}`);
+}
+</script>
+</body>
+</html>
