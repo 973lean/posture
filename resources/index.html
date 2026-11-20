@@ -8,7 +8,8 @@
 <style>
   /* Reminder: a blurred snapshot of every monitor with the card on the main screen. */
   #shade { position: fixed; inset: 0; display: none; opacity: 0; background: rgba(18, 18, 18, .16); transition: opacity .45s ease; }
-  #shade img { position: absolute; filter: blur(14px) saturate(1.05); }
+  /* Scaled up a touch so the blur's soft edges fall off-screen instead of showing the sharp desktop. */
+  #shade img { position: absolute; filter: blur(14px) saturate(1.05); transform: scale(1.08); }
   body.popup #shade { display: block; }
   body.popup.open #shade { opacity: 1; }
   .card {
