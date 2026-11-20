@@ -70,6 +70,16 @@ jobs:
         with:
           name: windows-check
           path: check/
+      # Also keep the latest screenshots on the ci-preview branch, where they're easy to look at.
+      - name: Publish screenshots
+        if: always()
+        shell: bash
+        run: |
+          cd check
+          git init -q -b ci-preview
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Windows check for ${{ github.sha }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-preview
 
   release:
     needs: [build, verify-windows]
